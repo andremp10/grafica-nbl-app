@@ -264,40 +264,68 @@ def render_status_view():
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 def render_chat_view():
+    # Inicializa estados se não existirem
+    if "messages" not in st.session_state: st.session_state.messages = []
+    
+    # Renderiza histórico ANTES (sempre visível)
     if not st.session_state.messages:
+        # Hero apenas se vazio
         st.markdown('<div class="hero-container"><div class="hero-title">Como posso ajudar?</div></div>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
-        if c1.button("📦 Meus Pedidos", use_container_width=True): st.session_state.pending_prompt = "Status dos meus pedidos"
-        if c2.button("💰 Faturamento", use_container_width=True): st.session_state.pending_prompt = "Resumo financeiro do mês"
-        if c3.button("📊 Relatórios", use_container_width=True): st.session_state.pending_prompt = "Gerar relatório operacional"
-        if st.session_state.get("pending_prompt"): st.rerun()
-                
+        # Botões definem o prompt e forçam rerun apenas aqui
+        if c1.button("📦 Meus Pedidos", use_container_width=True): 
+             st.session_state.pending_prompt = "Status dos meus pedidos"
+             st.rerun()
+        if c2.button("💰 Faturamento", use_container_width=True): 
+             st.session_state.pending_prompt = "Resumo financeiro do mês"
+             st.rerun()
+        if c3.button("📊 Relatórios", use_container_width=True): 
+             st.session_state.pending_prompt = "Gerar relatório operacional"
+             st.rerun()
     else:
+        # Mostra mensagens anteriores
         for msg in st.session_state.messages:
             align = "user" if msg["role"] == "user" else "assistant"
             with st.chat_message(align): st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Digite sua mensagem..."):
-        st.session_state.pending_prompt = prompt
-        st.rerun()
+    # Captura Input (Texto ou Botão Prévio)
+    # A prioridade é: Texto digitado AGORA > Texto vindo de Botão (pending_prompt)
+    
+    user_input = st.chat_input("Digite sua mensagem...")
+    prompt_to_process = None
 
-    if st.session_state.get("pending_prompt"):
-        prompt = st.session_state.pending_prompt
-        st.session_state.pending_prompt = None
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"): st.markdown(prompt)
+    if user_input:
+        prompt_to_process = user_input
+    elif st.session_state.get("pending_prompt"):
+        prompt_to_process = st.session_state.pending_prompt
+        st.session_state.pending_prompt = None # Limpa imediatamente
+
+    # Processamento Unificado (Síncrono/Linear)
+    if prompt_to_process:
+        # 1. Exibe msg do usuário imediatamente
+        st.session_state.messages.append({"role": "user", "content": prompt_to_process})
+        with st.chat_message("user"): 
+            st.markdown(prompt_to_process)
         
-        with st.status("🚀 Consultando Base de Dados...", expanded=True) as status:
-            time.sleep(1); status.write("🔍 Interpretando solicitação...")
-            time.sleep(1); status.write("📡 Buscando informações atualizadas...")
-            history = st.session_state.messages[:-1]
-            response = send_message_to_n8n(prompt, history)
-            status.update(label="✅ Resposta Gerada", state="complete", expanded=False)
+        # 2. Processa resposta (Status Container)
+        try:
+            with st.status("🚀 Consultando Base de Dados...", expanded=True) as status:
+                time.sleep(0.5); status.write("🔍 Interpretando solicitação...")
+                history = st.session_state.messages[:-1]
+                response = send_message_to_n8n(prompt_to_process, history)
+                
+                if not response:
+                    raise Exception("Resposta vazia do n8n")
+                    
+                status.update(label="✅ Resposta Gerada", state="complete", expanded=False)
             
-        final_resp = response or "Erro ao processar."
-        st.session_state.messages.append({"role": "assistant", "content": final_resp})
-        with st.chat_message("assistant"): st.markdown(final_resp)
-        st.rerun()
+            # 3. Exibe e salva resposta
+            st.session_state.messages.append({"role": "assistant", "content": response})
+            with st.chat_message("assistant"): 
+                st.markdown(response)
+                
+        except Exception as e:
+            st.error(f"Erro ao conectar com o assistente: {str(e)}")
 
 # --- 5. MAIN ---
 def main():
