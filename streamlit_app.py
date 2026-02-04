@@ -94,10 +94,24 @@ def format_currency(value: object) -> str:
 
 def kpi_card(label: str, value: object, delta: Optional[str] = None, color: str = "up") -> str:
     delta_html = f'<div class="metric-delta {color}">{delta}</div>' if delta else ""
-    value_html = format_currency(value) if isinstance(value, (int, float)) else str(value)
+    display_value = str(value)
+    if isinstance(value, (int, float)):
+        # Only format as currency if label strongly implies it
+        is_money = any(x in label.lower() for x in ["valor", "total", "saldo", "faturamento", "custo", "entradas", "saidas"])
+        is_money = is_money and ("qtde" not in label.lower() and "itens" not in label.lower() and "count" not in label.lower() and "pedidos" not in label.lower() and "registros" not in label.lower())
+        
+        if is_money:
+            display_value = format_currency(value)
+        else:
+            # Integer formatting for counts
+            if isinstance(value, int) or (isinstance(value, float) and value.is_integer()):
+                display_value = f"{int(value):,}".replace(",", ".")
+            else:
+                display_value = f"{value:.2f}"
+
     return (
         f'<div class="metric-box"><div class="metric-lbl">{label}</div>'
-        f'<div class="metric-val">{value_html}</div>{delta_html}</div>'
+        f'<div class="metric-val">{display_value}</div>{delta_html}</div>'
     )
 
 def _format_iso_dt(value: object) -> str:
@@ -546,49 +560,44 @@ def render_finance_view():
     status_list = sorted(base_df["status_texto"].dropna().astype(str).unique().tolist())
     categorias = sorted(base_df["categoria"].dropna().astype(str).unique().tolist())
 
-    col_f3, col_f4, col_f5 = st.columns([1, 1, 1])
-    with col_f3:
-        tipo_filter = st.multiselect("Tipo", tipos, default=tipos, key="fin_tipo")
-    with col_f4:
-        status_filter = st.multiselect("Status", status_list, default=status_list, key="fin_status")
-    with col_f5:
-        categoria_filter = st.multiselect(
-            "Categoria",
-            categorias,
-            default=categorias,
-            key="fin_categoria",
-        )
-
     col_f6, col_f7 = st.columns([1, 1])
     with col_f6:
-        situacao = st.selectbox(
-            "Situação",
-            ["Todos", "Apenas atrasados", "Apenas realizados", "Pendentes"],
-            key="fin_situacao",
-        )
-    with col_f7:
-        sort_field = st.selectbox(
+         sort_field = st.selectbox(
             "Ordenar por",
             ["Vencimento", "Valor", "Competência", "Descrição"],
             key="fin_sort_field",
         )
-    sort_desc = st.checkbox("Ordenação descendente", value=True, key="fin_sort_desc")
+    with col_f7:
+        sort_desc = st.checkbox("Decrescente", value=True, key="fin_sort_desc")
 
     df = base_df.copy()
     if desc_search:
         df = df[df["descricao"].str.contains(desc_search, case=False, na=False)]
     if tipo_filter:
         df = df[df["tipo"].isin(tipo_filter)]
-    if status_filter:
-        df = df[df["status_texto"].isin(status_filter)]
-    if categoria_filter:
-        df = df[df["categoria"].isin(categoria_filter)]
 
-    if situacao == "Apenas atrasados":
-        df = df[df["is_atrasado"]]
-    elif situacao == "Apenas realizados":
-        df = df[df["is_realizado"]]
-    elif situacao == "Pendentes":
+    # Simplified: no status/category filter logic exposed
+    # if status_filter... (removed)
+
+    col_f6, col_f7 = st.columns([1, 1])
+    # Simplified UI - Default filters are hidden but working
+    # Basic filters only
+    col_f3, col_f4 = st.columns([1, 1])
+    with col_f3:
+        # Default all types selected but hidden to user if they want simple
+        # But let's show basic Type filter as it is useful
+        tipo_filter = st.multiselect("Tipo", tipos, default=tipos, key="fin_tipo")
+    with col_f4:
+         # Simplified Status -> Just "Pendentes" vs "Realizados" checkbox?
+         # Or keep it simple. Let's hide detailed status and category for "Simple Mode".
+         # User asked for "dados basicos mesmo".
+         only_pending = st.checkbox("Apenas Pendentes/Atrasados", value=False)
+
+    status_filter = [] 
+    categoria_filter = []
+    
+    # Logic for simplified filters
+    if only_pending:
         df = df[~df["is_realizado"]]
 
     if "valor" in df.columns and not df["valor"].empty:
@@ -637,7 +646,7 @@ def render_finance_view():
 
     st.divider()
 
-    if {"competencia_mes", "tipo", "valor"}.issubset(df.columns):
+    if {"competencia_mes", "tipo", "valor"}.issubset(df.columns) and not df.empty:
         df_chart = (
             df.groupby(["competencia_mes", "tipo"], dropna=False)["valor"]
             .sum()
