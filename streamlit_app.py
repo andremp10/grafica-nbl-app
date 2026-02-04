@@ -18,212 +18,183 @@ st.set_page_config(
 # --- 2. CSS (Acabamento) ---
 st.markdown("""
 <style>
-    .main .block-container {max-width: 1000px; padding-top: 2rem; padding-bottom: 5rem;}
+    .main .block-container {max-width: 900px; padding-top: 2rem; padding-bottom: 5rem;}
     
-    /* Cards Dashboard */
-    .metric-container {
-        background-color: #1a1a1a;
-        border: 1px solid #333;
-        padding: 20px;
-        border-radius: 10px;
+    /* Hero - Tela inicial centralizada */
+    .hero-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 60vh;
         text-align: center;
     }
-    .metric-value {font-size: 28px; font-weight: bold; color: #fff;}
-    .metric-label {font-size: 14px; color: #888; text-transform: uppercase;}
-    .metric-delta {font-size: 14px; margin-top: 5px;}
-    .up {color: #22c55e;}
-    .down {color: #ef4444;}
-    
-    /* Footer */
-    .footer {
-        position: fixed; bottom: 10px; left: 20px;
-        font-size: 12px; color: #555; pointer-events: none;
+    .hero-title {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #fff;
+        margin-bottom: 2rem;
     }
     
-    /* Quick Actions */
-    .stButton button {width: 100%; border-radius: 8px;}
+    /* Sugestões agrupadas */
+    .suggestions-grid {
+        display: flex;
+        gap: 1rem;
+        justify-content: center;
+        width: 100%;
+        max-width: 800px;
+    }
+    .stButton button {
+        width: 100%;
+        padding: 1rem;
+        border-radius: 12px;
+        background: #1a1a1a;
+        border: 1px solid #333;
+        color: #ddd;
+        transition: all 0.2s;
+    }
+    .stButton button:hover {
+        border-color: #2563eb;
+        color: #fff;
+        transform: translateY(-2px);
+    }
+    
+    /* Mensagens */
+    .chat-container {
+        margin-top: 1rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    
+    /* Dashboards */
+    .metric-box {
+        background: #1a1a1a; border: 1px solid #333; padding: 1.5rem; border-radius: 10px; text-align: center;
+    }
+    .metric-val {font-size: 1.8rem; font-weight: bold; color:white}
+    .metric-lbl {font-size: 0.8rem; color: #888; text-transform: uppercase;}
+    
+    /* Footer */
+    .footer {position: fixed; bottom: 10px; left: 20px; font-size: 11px; color: #444;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. DADOS MOCKADOS (GRÁFICA) ---
-def get_mock_data():
-    clients = ["Restaurante Sabor & Arte", "Imobiliária Central", "Clínica Bem Estar", "Advocacia Silva", "Academia Fit"]
-    products = ["Cardápios A4", "Folders Triplos", "Cartões de Visita", "Banners 60x90", "Adesivos 5x5"]
-    status_list = ["🎨 Arte", "🖨️ Impressão", "✂️ Acabamento", "✅ Entregue", "📦 Retirada"]
-    
-    data = []
-    base_date = datetime.now()
-    for i in range(25):
-        data.append({
-            "Pedido": f"#{2400+i}",
-            "Cliente": random.choice(clients),
-            "Produto": random.choice(products),
-            "Valor": random.randint(150, 2500),
-            "Status": random.choice(status_list),
-            "Data": (base_date - timedelta(days=random.randint(0, 10))).strftime("%d/%m")
-        })
-    return pd.DataFrame(data)
+# --- 3. DADOS MOCKADOS ---
+def get_mock_orders():
+    return pd.DataFrame([
+        {"ID": "#2401", "Cliente": "Restaurante Sabor", "Status": "Entregue", "Valor": 890},
+        {"ID": "#2402", "Cliente": "Imob. Central", "Status": "Produção", "Valor": 1450},
+        {"ID": "#2403", "Cliente": "Clínica Bem Estar", "Status": "Arte", "Valor": 180},
+    ])
 
-df_orders = get_mock_data()
-
-# --- 4. VIEWS DE DASHBOARD ---
-
-def render_status_view():
-    st.title("🏭 Status de Produção")
-    st.divider()
-    
-    # KPIs
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: st.markdown('<div class="metric-container"><div class="metric-value">08</div><div class="metric-label">Na Fila</div></div>', unsafe_allow_html=True)
-    with c2: st.markdown('<div class="metric-container"><div class="metric-value">12</div><div class="metric-label">Em Produção</div></div>', unsafe_allow_html=True)
-    with c3: st.markdown('<div class="metric-container"><div class="metric-value">03</div><div class="metric-label">Atrasados</div><div class="metric-delta down">⚠️ Atenção</div></div>', unsafe_allow_html=True)
-    with c4: st.markdown('<div class="metric-container"><div class="metric-value">98%</div><div class="metric-label">No Prazo</div><div class="metric-delta up">▲ Excelente</div></div>', unsafe_allow_html=True)
-    
-    st.markdown("### 📋 Fila de Produção")
-    
-    # Filtros
-    col1, col2 = st.columns([3, 1])
-    with col1: query = st.text_input("Buscar cliente ou pedido", placeholder="Digite para filtrar...")
-    with col2: st_filter = st.selectbox("Status", ["Todos"] + list(df_orders["Status"].unique()))
-    
-    filtered = df_orders
-    if query: filtered = filtered[filtered["Cliente"].str.contains(query, case=False) | filtered["Pedido"].str.contains(query)]
-    if st_filter != "Todos": filtered = filtered[filtered["Status"] == st_filter]
-    
-    st.dataframe(
-        filtered,
-        column_config={
-            "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
-            "Status": st.column_config.TextColumn("Status", help="Fase atual")
-        },
-        use_container_width=True,
-        hide_index=True
-    )
-
-def render_billing_view():
-    st.title("💰 Financeiro")
-    st.divider()
-    
-    c1, c2, c3 = st.columns(3)
-    with c1: st.markdown('<div class="metric-container"><div class="metric-value">R$ 14.5k</div><div class="metric-label">Faturamento Mês</div><div class="metric-delta up">▲ 12% vs mês anterior</div></div>', unsafe_allow_html=True)
-    with c2: st.markdown('<div class="metric-container"><div class="metric-value">R$ 480</div><div class="metric-label">Ticket Médio</div></div>', unsafe_allow_html=True)
-    with c3: st.markdown('<div class="metric-container"><div class="metric-value">R$ 2.8k</div><div class="metric-label">A Receber</div></div>', unsafe_allow_html=True)
-    
-    st.markdown("### 📈 Evolução de Vendas (30 dias)")
-    chart_data = pd.DataFrame({
-        "Data": [(datetime.now() - timedelta(days=i)).strftime("%d/%m") for i in range(15)][::-1],
-        "Vendas": [random.randint(2000, 6000) for _ in range(15)]
-    }).set_index("Data")
-    st.line_chart(chart_data, color="#2563eb", height=300)
-
-def render_instructions_view():
-    st.title("ℹ️ Instruções e Ajuda")
-    st.markdown("""
-    ### Bem-vindo ao NBL Admin
-    
-    Este sistema foi desenvolvido para facilitar a gestão da Gráfica NBL.
-    
-    #### 🤖 Como usar o Assistente IA
-    - O **chat** está conectado à base de conhecimento da empresa.
-    - Você pode perguntar sobre **preços**, **prazos**, **status de pedidos** e **procedimentos**.
-    - Use os botões de ação rápida para consultas frequentes.
-    
-    #### 📊 Dashboards
-    - **Status de Pedidos**: Acompanhe o fluxo de produção em tempo real.
-    - **Faturamento**: Visão financeira gerencial.
-    
-    #### 📞 Suporte
-    - Desenvolvido por **Golfine Tecnologia**
-    - Suporte técnico: (11) 99999-9999
-    - Email: suporte@golfine.tech
-    """)
-
-# --- 5. CHAT & LOADING DINÂMICO ---
+# --- 4. VIEWS ---
 
 def render_chat_view():
-    # Quick Actions
-    c1, c2, c3 = st.columns(3)
-    if c1.button("📦 Meus Pedidos"): st.session_state.pending_prompt = "Quais pedidos estão em produção hoje?"
-    if c2.button("💰 Fechamento"): st.session_state.pending_prompt = "Quanto faturamos nesta semana?"
-    if c3.button("📊 Relatório"): st.session_state.pending_prompt = "Gere um resumo da operação de ontem."
-    
-    # Mensagens
-    for msg in st.session_state.messages:
-        align = "user" if msg["role"] == "user" else "assistant"
-        with st.chat_message(align):
-            st.markdown(msg["content"])
-            
-    # Input
-    if prompt := st.chat_input("Como posso ajudar?"):
+    # Se não tem mensagens, mostrar Hero Centralizado
+    if not st.session_state.messages:
+        st.markdown("""
+        <div class="hero-container">
+            <div class="hero-title">Como posso ajudar?</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Botões de sugestão centralizados
+        c1, c2, c3 = st.columns(3)
+        with c1: 
+            if st.button("📦 Meus Pedidos", use_container_width=True): 
+                st.session_state.pending_prompt = "Status dos meus pedidos"
+                st.rerun()
+        with c2: 
+            if st.button("💰 Faturamento", use_container_width=True): 
+                st.session_state.pending_prompt = "Resumo financeiro do mês"
+                st.rerun()
+        with c3: 
+            if st.button("📊 Relatórios", use_container_width=True): 
+                st.session_state.pending_prompt = "Gerar relatório operacional"
+                st.rerun()
+                
+    else:
+        # Se tem mensagens, mostra histórico normal
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+    # Input sempre visível
+    if prompt := st.chat_input("Digite sua mensagem..."):
         st.session_state.pending_prompt = prompt
         st.rerun()
 
-    # Processamento Pending
+    # Processamento
     if st.session_state.get("pending_prompt"):
         prompt = st.session_state.pending_prompt
         st.session_state.pending_prompt = None
         
-        # User MSG
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
         
-        # STATUS LOADING ANIMADO
-        with st.status("🚀 Iniciando assistente...", expanded=True) as status:
-            time.sleep(1) # UX Timing
-            status.write("🔍 Analisando sua solicitação...")
-            time.sleep(1.5)
-            status.write("📊 Consultando banco de dados...")
-            time.sleep(1.5)
-            status.write("🧠 Gerando resposta inteligente...")
+        # St.Status com etapas (Loading)
+        with st.status("🚀 Processando...", expanded=True) as status:
+            time.sleep(1)
+            status.write("🔍 Analisando contexto...")
+            time.sleep(1)
+            status.write("📊 Consultando dados...")
             
             history = st.session_state.messages[:-1]
             response = send_message_to_n8n(prompt, history)
+            status.update(label="✅ Concluído", state="complete", expanded=False)
             
-            status.update(label="✅ Resposta gerada!", state="complete", expanded=False)
-            
-        # Assistant MSG
-        reply = response or "Ocorreu um erro ao processar."
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        with st.chat_message("assistant"): st.markdown(reply)
+        final_resp = response or "Erro ao processar."
+        st.session_state.messages.append({"role": "assistant", "content": final_resp})
+        with st.chat_message("assistant"): st.markdown(final_resp)
+        st.rerun()
 
-# --- 6. MAIN APP ---
+def render_status_view():
+    st.markdown("### 🏭 Status de Produção")
+    st.divider()
+    c1,c2,c3,c4 = st.columns(4)
+    c1.metric("Na Fila", "8")
+    c2.metric("Produção", "12")
+    c3.metric("Atrasados", "3", "-1", delta_color="inverse")
+    c4.metric("No Prazo", "98%")
+    st.markdown("#### Lista de Pedidos")
+    st.dataframe(get_mock_orders(), use_container_width=True)
 
+def render_finance_view():
+    st.markdown("### 💰 Financeiro")
+    st.divider()
+    c1,c2 = st.columns(2)
+    c1.metric("Faturamento", "R$ 14.5k", "+12%")
+    c2.metric("Ticket Médio", "R$ 480")
+    st.line_chart([10, 20, 15, 25, 30])
+
+def render_instructions():
+    st.markdown("### ℹ️ Instruções")
+    st.info("Utilize a sidebar para navegar. O chat IA responde sobre preços e status.")
+
+# --- 5. MAIN ---
 def main():
-    # Sidebar
+    if "messages" not in st.session_state: st.session_state.messages = []
+    if "current_view" not in st.session_state: st.session_state.current_view = "Chat"
+
     with st.sidebar:
         st.title("🎨 NBL Admin")
-        st.caption("v4.1 • Golfine Tecnologia")
+        st.caption("v4.2")
         st.divider()
-        
-        menu = {
-            "💬 Assistente": "Chat",
-            "🏭 Status": "Status",
-            "💰 Financeiro": "Financeiro",
-            "ℹ️ Instruções": "Instruções"
-        }
-        
-        for label, view in menu.items():
-            if st.button(label, use_container_width=True, type="primary" if st.session_state.get("current_view") == view else "secondary"):
-                st.session_state.current_view = view
+        menu = {"💬 Chat": "Chat", "🏭 Status": "Status", "💰 Financeiro": "Financeiro", "ℹ️ Instruções": "Instruções"}
+        for k,v in menu.items():
+            if st.button(k, use_container_width=True, type="primary" if st.session_state.current_view==v else "secondary"):
+                st.session_state.current_view = v
                 st.rerun()
-                
-        st.markdown("<div style='flex:1'></div>", unsafe_allow_html=True)
         st.divider()
         st.caption("Desenvolvido por\n**Golfine Tecnologia**")
-        if st.button("Limpar Chat"):
-            st.session_state.messages = []
-            st.rerun()
+        if st.button("Limpar"):
+             st.session_state.messages = []
+             st.rerun()
 
-    # Init State
-    if "current_view" not in st.session_state: st.session_state.current_view = "Chat"
-    if "messages" not in st.session_state: st.session_state.messages = []
-    
-    # Routing
-    view = st.session_state.current_view
-    if view == "Chat": render_chat_view()
-    elif view == "Status": render_status_view()
-    elif view == "Financeiro": render_billing_view()
-    elif view == "Instruções": render_instructions_view()
+    if st.session_state.current_view == "Chat": render_chat_view()
+    elif st.session_state.current_view == "Status": render_status_view()
+    elif st.session_state.current_view == "Financeiro": render_finance_view()
+    elif st.session_state.current_view == "Instruções": render_instructions()
 
 if __name__ == "__main__":
     main()
