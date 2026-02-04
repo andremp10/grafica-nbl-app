@@ -1,7 +1,0 @@
-{
-  "name": "grafica NBL Admin",
-  "description": "Painel administrativo moderno para gráficas com gestão de pedidos e assistente IA integrado para consulta de dados.",
-  "requestFramePermissions": [
-    "microphone"
-  ]
-}

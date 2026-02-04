@@ -1,1 +1,0 @@
-# grafica-ia-admin
