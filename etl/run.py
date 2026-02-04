@@ -98,6 +98,27 @@ def to_str(val: Any) -> Optional[str]:
     s = str(val).strip()
     return s if s and s not in ("None", "null") else None
 
+def clean_string(val: Any) -> Optional[str]:
+    """Limpa strings: corrige encoding (mojibake) e remove caracteres especiais."""
+    s = to_str(val)
+    if not s: return None
+    
+    # 1. Tentar corrigir Mojibake (UTF-8 lido como Latin-1)
+    # Ex: MANUTENÃ§Ã£O -> MANUTENÇÃO
+    try:
+        s = s.encode('latin1').decode('utf-8')
+    except:
+        pass  # Se falhar, mantém original
+        
+    # 2. Remover caracteres indesejados (manter letras, números, espaços, pontos, traços, barras)
+    # Regex allow list: A-Z a-z 0-9 space . - / and Portuguese accents
+    # Mas como regex simples, vamos focar em remover o óbvio lixo
+    # User pediu remove %, @, _
+    import re
+    s = re.sub(r'[_@%]', ' ', s)
+    
+    return s.strip()
+
 # ============================================================================
 # CONEXÕES
 # ============================================================================
@@ -355,6 +376,10 @@ def transform_row(row: dict, table: str, mapping: dict) -> Optional[dict]:
             else:
                 new_row[pg_col] = uuid5_for(ref, val) if val else None
         
+        # String columns cleaning
+        elif any(x in pg_col for x in ("descricao", "nome", "titulo", "sobrenome", "razao_social", "fantasia", "obs", "observacoes")):
+            new_row[pg_col] = clean_string(val)
+        
         # Boolean
         elif pg_col in BOOL_COLS:
             new_row[pg_col] = to_bool(val)
@@ -385,7 +410,7 @@ def transform_row(row: dict, table: str, mapping: dict) -> Optional[dict]:
         
         # Default: manter valor
         else:
-            new_row[pg_col] = val
+            new_row[pg_col] = to_str(val) if isinstance(val, str) else val
     
     # --- AUTO-CATEGORIZATION PATCH ---
     if table == "is_financeiro_lancamentos":
@@ -415,8 +440,8 @@ def transform_cliente_pf(row: dict) -> Optional[dict]:
     if not cliente_id: return None
     return {
         "cliente_id": cliente_id,
-        "nome": to_str(row.get("nome")),
-        "sobrenome": to_str(row.get("sobrenome")),
+        "nome": clean_string(row.get("nome")),
+        "sobrenome": clean_string(row.get("sobrenome")),
         "nascimento": to_ts(row.get("nascimento")),
         "cpf": to_str(row.get("cpf")),
         "sexo": to_str(row.get("sexo"))
@@ -429,8 +454,8 @@ def transform_cliente_pj(row: dict) -> Optional[dict]:
     if not cliente_id: return None
     return {
         "cliente_id": cliente_id,
-        "razao_social": to_str(row.get("razao_social")),
-        "fantasia": to_str(row.get("fantasia")),
+        "razao_social": clean_string(row.get("razao_social")),
+        "fantasia": clean_string(row.get("fantasia")),
         "ie": to_str(row.get("ie")),
         "cnpj": to_str(row.get("cnpj"))
     }

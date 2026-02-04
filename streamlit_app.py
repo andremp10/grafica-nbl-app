@@ -520,9 +520,11 @@ def render_status_view():
 # =============================================================================
 
 
+import plotly.express as px
+
 def render_finance_view():
     st.markdown("### 💰 Controladoria & Vendas")
-    st.caption("Visão híbrida: Fluxo de Caixa (Realizado) e Performance de Vendas (Pedidos).")
+    st.caption("Visão Consolidadada: Fluxo de Caixa e Vendas")
 
     if not is_connected():
         st.warning("⚠️ Supabase não configurado.")
@@ -530,7 +532,7 @@ def render_finance_view():
 
     st.divider()
 
-    # --- FILTROS GERAIS ---
+    # --- FILTROS ---
     col_f1, col_f2 = st.columns([2, 1])
     hoje = datetime.now()
     comp_inicio_default = (hoje - timedelta(days=30)).replace(day=1)
@@ -544,117 +546,126 @@ def render_finance_view():
     
     comp_inicio, comp_fim = _to_date_bounds(competencia)
     snapshot = fetch_snapshot_meta()
-    snapshot_key = snapshot.get("cache_key")
-
-    # --- ABA 1: FLUXO DE CAIXA (REALIZADO) ---
-    st.markdown("#### 💵 Fluxo de Caixa (Realizado)")
     
-    with st.spinner("Analisando caixa..."):
+    # --- FETCH DATA ---
+    with st.spinner("Carregando dados..."):
         df_fin = fetch_view_data(
             view_name="vw_dashboard_financeiro",
             start_date=comp_inicio,
             end_date=comp_fim,
             date_column="competencia_mes",
-            snapshot_key=snapshot_key,
+            snapshot_key=snapshot.get("cache_key"),
         )
-
-    if not df_fin.empty:
-        df_fin = _normalize_financeiro_df(df_fin)
         
-        # Filtro de Tipo (Removido da UI, mas se existir logica residual, limpar)
-        # df_fin já vem filtrado por data.
-
-        total_entradas = df_fin[df_fin["tipo"] == "Entrada"]["valor"].sum()
-        total_saidas = df_fin[df_fin["tipo"] == "Saída"]["valor"].sum()
-        saldo = total_entradas - total_saidas
-
-        k1, k2, k3 = st.columns(3)
-        k1.metric("🟢 Receitas Totais", format_currency(total_entradas))
-        k2.metric("🔴 Despesas Totais", format_currency(total_saidas))
-        k3.metric("💰 Resultado Líquido", format_currency(saldo), delta=format_currency(saldo))
-        
-        # --- DESPESAS POR CATEGORIA (Opcional - Validado 63% Integrity) ---
-        if total_saidas > 0:
-            st.caption("Detalhamento de Despesas (Principais Custos)")
-            df_saidas = df_fin[df_fin["tipo"] == "Saída"].copy()
-            if not df_saidas.empty:
-                # Top 5 categorias
-                top_despesas = df_saidas.groupby("categoria")["valor"].sum().sort_values(ascending=False).head(5)
-                # Chart horizontal
-                st.bar_chart(top_despesas, color="#e74c3c", height=200)
-
-    else:
-        st.info("Sem dados financeiros para o período.")
-
-    st.divider()
-
-    # --- ABA 2: INSIGHTS DE VENDAS (PEDIDOS) ---
-    st.markdown("#### 📈 Performance de Vendas (Pedidos)")
-    st.caption("Análise baseada nos pedidos gerados no período (independente do pagamento).")
-
-    with st.spinner("Analisando vendas..."):
         df_pedidos = fetch_view_data(
             view_name="vw_dashboard_pedidos",
             start_date=comp_inicio,
             end_date=comp_fim,
             date_column="data_criacao",
-            snapshot_key=snapshot_key,
+            snapshot_key=snapshot.get("cache_key"),
         )
 
-    if df_pedidos.empty:
-        st.info("Nenhum pedido encontrado no período.")
-        return
+    # --- BLOCO 1: FINANCEIRO (KPIs Estáticos) ---
+    st.markdown("#### 💵 Resultados Financeiros")
+    
+    val_receitas = 0.0
+    val_despesas = 0.0
+    val_saldo = 0.0
 
-    # Processamento de Vendas
-    df_pedidos["valor_total"] = pd.to_numeric(df_pedidos["valor_total"], errors="coerce").fillna(0.0)
+    if not df_fin.empty:
+        df_fin = _normalize_financeiro_df(df_fin)
+        # Clean string/category columns
+        for col in ["categoria", "descricao", "fornecedor"]:
+            if col in df_fin.columns:
+                df_fin[col] = df_fin[col].astype(str).str.replace(r'[^A-Za-z0-9 \-\./]+', '', regex=True).str.strip()
+
+        val_receitas = df_fin[df_fin["tipo"] == "Entrada"]["valor"].sum()
+        val_despesas = df_fin[df_fin["tipo"] == "Saída"]["valor"].sum()
+        val_saldo = val_receitas - val_despesas
     
-    # 1. Receita por Cliente (Pareto)
-    st.markdown("##### 🏆 Maiores Clientes")
-    top_clientes = (
-        df_pedidos.groupby("cliente_nome")["valor_total"]
-        .sum()
-        .sort_values(ascending=False)
-        .head(10)
-        .reset_index()
-    )
-    top_clientes.columns = ["Cliente", "Total Comprado"]
-    
-    # Chart e Tabela lado a lado
-    c_chart, c_table = st.columns([2, 1])
-    with c_chart:
-        st.bar_chart(top_clientes.set_index("Cliente"), color="#9b59b6")
-    with c_table:
-        st.dataframe(
-            top_clientes,
-            column_config={
-                "Total Comprado": st.column_config.NumberColumn(format="R$ %.2f")
-            },
-            hide_index=True,
-            use_container_width=True
+    # Cards Estáticos
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Faturamento Total", format_currency(val_receitas))
+    c2.metric("Despesas Totais", format_currency(val_despesas))
+    c3.metric("Resultado Líquido", format_currency(val_saldo), delta=format_currency(val_saldo))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # --- CHART: DESPESAS POR CATEGORIA (Plotly Static) ---
+    if val_despesas > 0 and not df_fin.empty:
+        st.markdown("##### 📉 Detalhamento de Despesas")
+        
+        df_saidas = df_fin[df_fin["tipo"] == "Saída"].copy()
+        # Agrupar por Categoria
+        df_chart = df_saidas.groupby("categoria")["valor"].sum().reset_index()
+        df_chart = df_chart.sort_values(by="valor", ascending=True) # Ascending for horizontal bar
+        
+        fig = px.bar(
+            df_chart, 
+            x="valor", 
+            y="categoria",
+            orientation='h',
+            text_auto='.2s',
+            title="",
+            color_discrete_sequence=['#e74c3c'] * len(df_chart) # Static Red
         )
+        
+        fig.update_layout(
+            xaxis_title="Valor (R$)",
+            yaxis_title=None,
+            height=300,
+            margin=dict(l=0, r=0, t=10, b=0),
+            showlegend=False,
+            # Disable interaction
+            dragmode=False,
+            hovermode=False 
+        )
+        
+        # Format axes
+        fig.update_xaxes(showgrid=True, gridcolor='#333')
+        
+        st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
 
     st.divider()
 
-    # 2. Maiores Pedidos da Semana/Período
-    st.markdown("##### 📦 Maiores Pedidos do Período")
-    top_pedidos = (
-        df_pedidos[["cliente_nome", "data_criacao", "valor_total", "qtde_itens", "status_pedido"]]
-        .sort_values(by="valor_total", ascending=False)
-        .head(10)
-    )
+    # --- BLOCO 2: VENDAS (Clientes) ---
+    st.markdown("#### 🏆 Top Clientes")
+
+    if not df_pedidos.empty:
+        # Clean client names
+        if "cliente_nome" in df_pedidos.columns:
+             df_pedidos["cliente_nome"] = df_pedidos["cliente_nome"].astype(str).str.replace(r'[^A-Za-z0-9 \.]+', '', regex=True).str.title()
+
+        top_clientes = df_pedidos.groupby("cliente_nome")["valor_total"].sum().reset_index()
+        top_clientes = top_clientes.sort_values(by="valor_total", ascending=False).head(10)
+        
+        # Sort for chart (Ascending for horizontal bottom-up)
+        top_clientes_chart = top_clientes.sort_values(by="valor_total", ascending=True)
+
+        fig_cli = px.bar(
+            top_clientes_chart,
+            x="valor_total",
+            y="cliente_nome",
+            orientation='h',
+            text_auto='.2s',
+            color_discrete_sequence=['#9b59b6'] * len(top_clientes) if 'top_clientes' in locals() else ['#9b59b6'], # Purple
+        )
+        
+        fig_cli.update_layout(
+            xaxis_title="Total Comprado (R$)",
+            yaxis_title=None,
+            height=400,
+            margin=dict(l=0, r=0, t=10, b=0),
+            showlegend=False,
+            dragmode=False
+        )
+        
+        st.plotly_chart(fig_cli, use_container_width=True, config={'staticPlot': True})
     
-    st.dataframe(
-        top_pedidos,
-        column_config={
-            "cliente_nome": st.column_config.TextColumn("Cliente", width="large"),
-            "data_criacao": st.column_config.DatetimeColumn("Data", format="DD/MM/YYYY"),
-            "valor_total": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-            "qtde_itens": st.column_config.NumberColumn("Itens"),
-            "status_pedido": st.column_config.TextColumn("Status"),
-        },
-        hide_index=True,
-        use_container_width=True
-    )
+    else:
+        st.info("Sem dados de vendas para o período.")
+
+
 
 
 
