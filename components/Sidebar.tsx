@@ -18,14 +18,13 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
       <nav className="flex-1 px-4 py-4 space-y-2 overflow-y-auto scrollbar-hide">
         <div>
           <p className="hidden md:block text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4 px-4">Menu Principal</p>
-          
+
           <button
             onClick={() => setView('home')}
-            className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${
-              currentView === 'home' 
-              ? 'bg-orange-500 text-white shadow-xl shadow-orange-900/20' 
-              : 'text-slate-400 hover:bg-white/5 hover:text-white'
-            }`}
+            className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${currentView === 'home'
+                ? 'bg-orange-500 text-white shadow-xl shadow-orange-900/20'
+                : 'text-slate-400 hover:bg-white/5 hover:text-white'
+              }`}
           >
             {/* Ícone de insights/gráficos para a nova aba Insights (Home) */}
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -36,11 +35,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
 
           <button
             onClick={() => setView('analytics')}
-            className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${
-              currentView === 'analytics' 
-              ? 'bg-orange-500 text-white shadow-xl shadow-orange-900/20' 
-              : 'text-slate-400 hover:bg-white/5 hover:text-white'
-            }`}
+            className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${currentView === 'analytics'
+                ? 'bg-orange-500 text-white shadow-xl shadow-orange-900/20'
+                : 'text-slate-400 hover:bg-white/5 hover:text-white'
+              }`}
           >
             {/* Ícone de home/dashboard para a nova aba Dashboard (Analytics) */}
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -51,11 +49,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
 
           <button
             onClick={() => setView('fullscreen-chat')}
-            className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${
-              currentView === 'fullscreen-chat' 
-              ? 'bg-orange-500 text-white shadow-xl shadow-orange-900/20' 
-              : 'text-slate-400 hover:bg-white/5 hover:text-white'
-            }`}
+            className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${currentView === 'fullscreen-chat'
+                ? 'bg-orange-500 text-white shadow-xl shadow-orange-900/20'
+                : 'text-slate-400 hover:bg-white/5 hover:text-white'
+              }`}
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
@@ -67,7 +64,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
         {/* Quick View Stats - Bottom Sidebar */}
         <div className="hidden md:block pt-8 border-t border-slate-800 mt-4">
           <p className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4 px-4">Status de Recurso</p>
-          
+
           <div className="mx-2 p-3 rounded-xl bg-white/5 space-y-3">
             <div className="space-y-2">
               <div className="flex justify-between items-center text-[10px] font-bold">
@@ -82,15 +79,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, setView }) => {
         </div>
       </nav>
 
-      <div className="p-4 border-t border-slate-800">
-        <div className="flex items-center gap-3 p-3 bg-white/5 rounded-2xl border border-white/5">
-          <img src="https://picsum.photos/40/40" className="w-9 h-9 rounded-full border border-white/20 shadow-sm" alt="Avatar" />
-          <div className="hidden md:block overflow-hidden">
-            <p className="text-xs font-bold text-white truncate">Lucas Admin</p>
-            <p className="text-[9px] text-orange-400 font-black uppercase tracking-widest">Master</p>
-          </div>
-        </div>
-      </div>
+
     </aside>
   );
 };

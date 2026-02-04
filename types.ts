@@ -5,6 +5,7 @@ export interface Order {
   product: string;
   quantity: number;
   status: 'production' | 'tomorrow' | 'next_7_days';
+  priority?: 'Normal' | 'Alta' | 'Urgente' | 'Baixa';
   dueDate: string;
   price: number;
 }
