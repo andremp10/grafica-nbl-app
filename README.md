@@ -4,6 +4,7 @@ Sistema de gestão inteligente para gráfica com dashboard, pedidos e chat IA.
 
 ## 🚀 Live Demo
 **Acesse no Netlify:** (O link será gerado pelo Netlify após o deploy)
+<!-- Last Deploy Trigger: Forced Redploy -->
 
 ## 🚀 Stack
 
