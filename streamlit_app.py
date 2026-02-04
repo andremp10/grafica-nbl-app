@@ -670,6 +670,7 @@ def render_finance_view():
             
             fig_bar.update_traces(
                 textposition='outside',
+                texttemplate='<b>%{y:.2s}</b>', # Bold text
                 hovertemplate = "<b>%{customdata}</b><br>R$ %{y:,.2f}",
                 customdata = df_bar[["categoria"]], # Show full name on hover
                 showlegend=False
@@ -678,14 +679,14 @@ def render_finance_view():
             fig_bar.update_layout(
                 xaxis_title=None,
                 yaxis_title=None,
-                height=450, # More vertical space
-                margin=dict(l=0, r=0, t=20, b=50), # Bottom margin for labels
+                height=550, # Significantly taller
+                margin=dict(l=0, r=0, t=20, b=100), # Extra space for vertical text
                 showlegend=False,
                 dragmode=False,
                 xaxis=dict(
                     showgrid=False, 
-                    tickangle=-45, # Slant labels
-                    automargin=True, # Prevent cutoff
+                    tickangle=-90, # Vertical labels
+                    automargin=True, 
                 ),
                 yaxis=dict(showgrid=True, gridcolor='#333', visible=True),
             )
@@ -720,12 +721,9 @@ def render_finance_view():
             x="wrapped_name", # Short name on Axis
             y="valor_total",
             text_auto='.2s',
-            title="",
-        )
-        
-        fig_cli.update_traces(
             marker_color='#8e44ad', # Deep Purple
             textposition='outside',
+            texttemplate='<b>%{y:.2s}</b>', # Bold text, short format
             hovertemplate = "<b>%{customdata}</b><br>R$ %{y:,.2f}",
             customdata = top_clientes[["cliente_nome"]] # Full name on hover
         )
@@ -733,12 +731,12 @@ def render_finance_view():
         fig_cli.update_layout(
             xaxis_title=None,
             yaxis_title="Total Comprado (R$)",
-            height=450, # Increased height
-            margin=dict(l=0, r=0, t=10, b=80), # Large bottom margin
+            height=600, # Very tall for legibility
+            margin=dict(l=0, r=0, t=10, b=120), # Large bottom margin for vertical names
             showlegend=False,
             dragmode=False,
             xaxis=dict(
-                tickangle=-45,
+                tickangle=-90, # Vertical labels
                 automargin=True
             )
         )
