@@ -73,6 +73,13 @@ st.markdown(
 
     .guide-box {background: #1a1a1a; padding: 1.5rem; border-radius: 10px; margin-bottom: 1rem; border-left: 4px solid #2563eb;}
     .prompt-card {background: #151515; border: 1px dashed #444; padding: 10px 15px; border-radius: 6px; font-family: monospace; color: #a5b4fc; margin-bottom: 8px; font-size: 0.9rem;}
+
+    /* FORCE MOBILE MENU VISIBILITY */
+    @media (max-width: 768px) {
+        header[data-testid="stHeader"] {z-index: 999999 !important; visibility: visible !important; background: transparent !important;}
+        [data-testid="stSidebarNav"] {display: block !important;}
+        .stApp { margin-top: 0px !important; }
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -644,10 +651,10 @@ def render_finance_view():
                 hovertemplate = "<b>%{label}</b><br>R$ %{value:,.2f}<br>(%{percent})"
             )
             fig_pie.update_layout(
-                height=350,
-                margin=dict(l=20, r=20, t=20, b=20),
+                height=400, # More space for legend
+                margin=dict(l=20, r=20, t=20, b=100), # Big bottom margin for legend
                 showlegend=True,
-                legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5), # Legend at bottom
+                legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5), # Legend below chart
                 dragmode=False,
             )
             st.plotly_chart(fig_pie, use_container_width=True, config={'displayModeBar': False})
@@ -686,20 +693,20 @@ def render_finance_view():
             fig_bar.update_layout(
                 xaxis_title=None,
                 yaxis_title=None,
-                height=500, # Balanced height
-                margin=dict(l=0, r=0, t=40, b=50), # Increased top margin for labels
+                height=600, # Taller
+                margin=dict(l=0, r=0, t=40, b=120), # Huge bottom margin for labels
                 showlegend=False,
                 dragmode=False,
                 xaxis=dict(
                     showgrid=False, 
-                    tickangle=0, # Horizontal labels
+                    tickangle=0, 
                     automargin=True, 
                 ),
                 yaxis=dict(
                     showgrid=True, 
                     gridcolor='#333', 
                     visible=True,
-                    range=[0, max_val * 1.2] # 20% Headroom
+                    range=[0, max_val * 1.25] # More headroom
                 ),
             )
             
@@ -747,12 +754,12 @@ def render_finance_view():
         fig_cli.update_layout(
             xaxis_title=None,
             yaxis_title="Total Comprado (R$)",
-            height=500, # Balanced height
-            margin=dict(l=0, r=0, t=10, b=50),
+            height=600, 
+            margin=dict(l=0, r=0, t=20, b=120), # Huge margin for names
             showlegend=False,
             dragmode=False,
             xaxis=dict(
-                tickangle=0, # Horizontal labels (User Request)
+                tickangle=0, 
                 automargin=True
             )
         )
