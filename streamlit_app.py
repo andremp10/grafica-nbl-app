@@ -627,6 +627,9 @@ def render_finance_view():
             else:
                 df_donut = df_chart
             
+            # Custom Labels: Hide % if <= 2% to prevent overlap
+            df_donut["text_label"] = df_donut["percent"].apply(lambda x: f"{x:.1f}%" if x > 2 else "")
+            
             fig_pie = px.pie(
                 df_donut, 
                 values="valor", 
@@ -636,7 +639,8 @@ def render_finance_view():
             )
             fig_pie.update_traces(
                 textposition='outside', 
-                textinfo='percent',
+                text=df_donut["text_label"],
+                textinfo='text',
                 hovertemplate = "<b>%{label}</b><br>R$ %{value:,.2f}<br>(%{percent})"
             )
             fig_pie.update_layout(
@@ -657,6 +661,9 @@ def render_finance_view():
             
             # WRAP LABELS for legibility on vertical chart
             df_bar["wrapped_label"] = df_bar["categoria"].apply(lambda x: _wrap_text(x, width=15))
+            
+            # Calc max for headroom
+            max_val = df_bar["valor"].max() if not df_bar.empty else 100
             
             fig_bar = px.bar(
                 df_bar,
@@ -680,7 +687,7 @@ def render_finance_view():
                 xaxis_title=None,
                 yaxis_title=None,
                 height=500, # Balanced height
-                margin=dict(l=0, r=0, t=20, b=50), # Space for horizontal wrapped text
+                margin=dict(l=0, r=0, t=40, b=50), # Increased top margin for labels
                 showlegend=False,
                 dragmode=False,
                 xaxis=dict(
@@ -688,7 +695,12 @@ def render_finance_view():
                     tickangle=0, # Horizontal labels
                     automargin=True, 
                 ),
-                yaxis=dict(showgrid=True, gridcolor='#333', visible=True),
+                yaxis=dict(
+                    showgrid=True, 
+                    gridcolor='#333', 
+                    visible=True,
+                    range=[0, max_val * 1.2] # 20% Headroom
+                ),
             )
             
             st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
