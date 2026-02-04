@@ -1,17 +1,9 @@
 -- =============================================================================
--- MIGRATION 004: Otimizar vw_dashboard_pedidos (evitar statement timeout)
+-- MIGRATION 004 (FINAL): Otimizar vw_dashboard_pedidos + Simplificar Status (Essenciais)
 -- Data: 2026-02-04
---
 -- Contexto:
--- A view anterior agregava TODOS os itens (GROUP BY em is_pedidos_itens) e depois
--- fazia JOIN com pedidos. Isso pode causar "canceling statement due to statement timeout"
--- no PostgREST mesmo em consultas pequenas (LIMIT 5), pois o planner precisava
--- materializar a agregacao global.
---
--- Solucao:
--- Trocar a agregacao global por LATERAL, agregando apenas os itens do pedido da linha.
--- Assim, consultas paginadas (ORDER BY created_at DESC LIMIT N) conseguem usar indice
--- de pedidos e calcular os agregados somente para N pedidos.
+-- O usuario solicitou manter apenas os status ESSENCIAIS.
+-- Mapeamento baseados nos dados reais de uso (73k+ em 'Envio/conferencia').
 -- =============================================================================
 
 CREATE OR REPLACE VIEW public.vw_dashboard_pedidos AS
@@ -24,26 +16,92 @@ SELECT
         'Cliente #' || LEFT(p.cliente_id::text, 8)
     ) AS cliente_nome,
     p.created_at AS data_criacao,
-    COALESCE(ai.data_entrega, ai.data_prazo) AS data_prazo_validada,
-    COALESCE(ai.status_agregado, 'Sem Status') AS status_pedido,
+    
+    -- DATA PRAZO: Considera NULL se for muito antiga (< 2010)
+    CASE 
+        WHEN COALESCE(ai.data_entrega, ai.data_prazo) < '2010-01-01' THEN NULL 
+        ELSE COALESCE(ai.data_entrega, ai.data_prazo) 
+    END AS data_prazo_validada,
+
+    -- STATUS SIMPLIFICADO (Mapeamento Final)
+    CASE
+        -- Finalizados / Entregues
+        WHEN ai.status_agregado ILIKE '%Entregue%' 
+          OR ai.status_agregado ILIKE '%Retirado%' 
+          OR ai.status_agregado ILIKE '%Finalizado%' 
+          OR ai.status_agregado ILIKE '%Concluído%' 
+          OR ai.status_agregado ILIKE '%Cancelado%' 
+          THEN 'Finalizado'
+
+        -- Enviados / Logistica
+        WHEN ai.status_agregado ILIKE '%Enviado%' 
+          OR ai.status_agregado ILIKE '%Logística%' 
+          OR ai.status_agregado ILIKE '%Serviço de Entrega%' 
+          THEN 'Enviado'
+
+        -- Produção (Aprovado = Início da Produção)
+        WHEN ai.status_agregado ILIKE '%Produção%' 
+          OR ai.status_agregado ILIKE '%Impressão%' 
+          OR ai.status_agregado ILIKE '%Acabamento%' 
+          OR ai.status_agregado ILIKE '%Arquivo aprovado%' 
+          OR ai.status_agregado ILIKE '%Cartão em Produção%'
+          OR ai.status_agregado ILIKE '%Pró-Solução%'
+          THEN 'Em Produção'
+
+        -- Problemas
+        WHEN ai.status_agregado ILIKE '%Reenviar%' 
+          OR ai.status_agregado ILIKE '%fora do Padrão%' 
+          OR ai.status_agregado ILIKE '%Pendencia%' 
+          OR ai.status_agregado ILIKE '%Erro%'
+          THEN 'Problema no Arquivo'
+
+        -- Análise (Default para o maior volume)
+        -- Envio/conferencia, Arquivo OK, Pagamento, etc.
+        ELSE 'Em Análise'
+    END AS status_pedido,
+
     COALESCE(ai.qtde_itens, 0)::integer AS qtde_itens,
     p.total AS valor_total,
     p.frete_valor,
-    COALESCE(ai.is_finalizado, FALSE) AS is_finalizado,
+    
+    -- IS_FINALIZED: Sincronizado com o status simplificado
+    CASE 
+        WHEN ai.status_agregado ILIKE '%Entregue%' 
+          OR ai.status_agregado ILIKE '%Retirado%' 
+          OR ai.status_agregado ILIKE '%Finalizado%' 
+          OR ai.status_agregado ILIKE '%Concluído%' 
+          OR ai.status_agregado ILIKE '%Cancelado%' 
+          THEN TRUE
+        ELSE FALSE
+    END AS is_finalizado,
+
+    -- IS_ATRASADO
     CASE
-        WHEN COALESCE(ai.data_entrega, ai.data_prazo) IS NOT NULL
-             AND COALESCE(ai.data_entrega, ai.data_prazo) < CURRENT_TIMESTAMP
-             AND NOT COALESCE(ai.is_finalizado, FALSE)
+        WHEN (COALESCE(ai.data_entrega, ai.data_prazo) >= '2010-01-01')
+             AND (COALESCE(ai.data_entrega, ai.data_prazo) < CURRENT_TIMESTAMP)
+             AND NOT (
+                ai.status_agregado ILIKE '%Entregue%' 
+                OR ai.status_agregado ILIKE '%Retirado%' 
+                OR ai.status_agregado ILIKE '%Finalizado%'
+                OR ai.status_agregado ILIKE '%Cancelado%'
+             )
         THEN TRUE
         ELSE FALSE
     END AS is_atrasado,
+
     CASE
-        WHEN COALESCE(ai.data_entrega, ai.data_prazo) IS NOT NULL
-             AND COALESCE(ai.data_entrega, ai.data_prazo) < CURRENT_TIMESTAMP
-             AND NOT COALESCE(ai.is_finalizado, FALSE)
+        WHEN (COALESCE(ai.data_entrega, ai.data_prazo) >= '2010-01-01')
+             AND (COALESCE(ai.data_entrega, ai.data_prazo) < CURRENT_TIMESTAMP)
+             AND NOT (
+                ai.status_agregado ILIKE '%Entregue%' 
+                OR ai.status_agregado ILIKE '%Retirado%' 
+                OR ai.status_agregado ILIKE '%Finalizado%'
+                OR ai.status_agregado ILIKE '%Cancelado%'
+             )
         THEN GREATEST(0, CURRENT_DATE - COALESCE(ai.data_entrega, ai.data_prazo)::date)
         ELSE 0
     END AS dias_em_atraso
+
 FROM public.is_pedidos p
 LEFT JOIN public.is_clientes_pf pf ON pf.cliente_id = p.cliente_id
 LEFT JOIN public.is_clientes_pj pj ON pj.cliente_id = p.cliente_id
@@ -53,26 +111,25 @@ LEFT JOIN LATERAL (
         s.data_prazo,
         s.data_entrega,
         s.status_agregado,
+        -- is_finalizado interno do lateral (para uso auxiliar se necessario)
         (
             COALESCE(s.status_agregado, '') ILIKE '%entregue%'
             OR COALESCE(s.status_agregado, '') ILIKE '%finalizado%'
-            OR COALESCE(s.status_agregado, '') ILIKE '%concluid%'
+            OR COALESCE(s.status_agregado, '') ILIKE '%conclui%'
             OR COALESCE(s.status_agregado, '') ILIKE '%cancelad%'
+            OR COALESCE(s.status_agregado, '') ILIKE '%retirado%'
         ) AS is_finalizado
     FROM (
         SELECT
             COUNT(*)::integer AS qtde_itens,
-            MIN(CASE WHEN previsao_producao < '1900-01-01' THEN NULL ELSE previsao_producao END) AS data_prazo,
-            MAX(CASE WHEN previsao_entrega < '1900-01-01' THEN NULL ELSE previsao_entrega END) AS data_entrega,
-            string_agg(DISTINCT status, ', ' ORDER BY status) AS status_agregado
+            MIN(CASE WHEN previsao_producao < '2010-01-01' THEN NULL ELSE previsao_producao END) AS data_prazo,
+            MAX(CASE WHEN previsao_entrega < '2010-01-01' THEN NULL ELSE previsao_entrega END) AS data_entrega,
+            -- JOIN para pegar o NOME do status
+            string_agg(DISTINCT COALESCE(st.nome, i.status), ', ' ORDER BY COALESCE(st.nome, i.status)) AS status_agregado
         FROM public.is_pedidos_itens i
+        LEFT JOIN public.is_extras_status st ON CAST(st.id AS text) = i.status
         WHERE i.pedido_id = p.id
     ) s
 ) ai ON TRUE;
 
 GRANT SELECT ON public.vw_dashboard_pedidos TO anon, authenticated;
-
--- Indices que ajudam o planner a empurrar ORDER BY/LIMIT (se ainda nao existirem).
-CREATE INDEX IF NOT EXISTS idx_is_pedidos_created_at ON public.is_pedidos(created_at);
-CREATE INDEX IF NOT EXISTS idx_is_pedidos_itens_pedido_id ON public.is_pedidos_itens(pedido_id);
-
