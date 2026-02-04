@@ -23,6 +23,7 @@ env/
 .env
 .env.local
 .env.*.local
+/.streamlit/secrets.toml
 
 # IDE
 .vscode/
@@ -55,3 +56,8 @@ coverage/
 *.old
 *_copy*
 *.tmp
+
+# Local debug/probes
+debug_request.py
+probe_*.py
+test_webhook.py

@@ -1,87 +1,48 @@
-# Gráfica NBL Admin
+# Gráfica NBL Admin 🎨
 
-Sistema de gestão inteligente para gráfica com dashboard, pedidos e chat IA.
+Sistema de gestão premium e Chat Inteligente para gráficas. Desenvolvido em **Streamlit**.
 
-## 🚀 Live Demo
-**Acesse aqui:** [https://arthurpessoaa.github.io/Grafica_project/](https://arthurpessoaa.github.io/Grafica_project/)
+## 🚀 Como Rodar (Local)
 
-## 🚀 Stack
+1.  **Instale as dependências:**
+    ```bash
+    pip install -r requirements.txt
+    ```
 
-- **Frontend**: React + TypeScript + Vite
-- **Styling**: Tailwind CSS
-- **IA**: Google Gemini via Netlify Functions
-- **Backend/ETL**: Python (migração MySQL → Supabase)
+2.  **Configure o Ambiente:**
+    *   Crie um arquivo `.env` na raiz.
+    *   Adicione sua URL do N8N:
+        ```bash
+        WEBHOOK_URL="https://webhook-pre.golfine.com.br/webhook/..."
+        ```
+        *(Compatibilidade: também aceitamos `VITE_WEBHOOK_URL`.)*
 
-## ⚡ Quick Start
+3.  **Execute o App:**
+    ```bash
+    streamlit run streamlit_app.py
+    ```
 
-### Frontend (React)
+---
 
-```bash
-# Instalar dependências
-npm install
+## ☁️ Como Fazer Deploy (Streamlit Cloud)
 
-# Rodar em desenvolvimento
-npm run dev
+O jeito mais fácil, gratuito e rápido de colocar este app no ar é usando a **Streamlit Cloud**.
 
-# Build para produção
-npm run build
-```
+1.  Acesse: [share.streamlit.io](https://share.streamlit.io/)
+2.  Faça login com seu GitHub.
+3.  Clique em **"New App"**.
+4.  Selecione este repositório.
+5.  **Main file path:** `streamlit_app.py`
+6.  **Advanced Settings (Secrets):**
+    *   Configure em formato TOML (ex.: `WEBHOOK_URL = "..."`).
+7.  Clique em **Deploy!** 🚀
 
-### ETL (Python)
+O App ficará online em minutos com HTTPS automático.
 
-```bash
-# Criar ambiente virtual
-python -m venv venv
-venv\Scripts\activate  # Windows
+---
 
-# Instalar dependências
-pip install -r requirements.txt
+## 📂 Estrutura
 
-# Configurar variáveis
-cp .env.example .env
-# Editar .env com suas credenciais
-
-# Rodar migração
-python -m src.main --sql ./sql_input/seu_dump.sql
-```
-
-## 🔧 Configuração
-
-### Variáveis de Ambiente
-
-Copie `.env.example` para `.env` e configure:
-
-| Variável | Descrição |
-|----------|-----------|
-| `SUPABASE_URL` | URL do projeto Supabase |
-| `SUPABASE_KEY` | Service role key |
-| `PG_HOST` | Host do Postgres |
-| `GEMINI_API_KEY` | Chave da API Gemini |
-| `VITE_WEBHOOK_URL` | (Opcional) Webhook externo para IA |
-
-## 📁 Estrutura
-
-```
-├── components/     # Componentes React
-├── services/       # Serviços (IA, API)
-├── src/            # ETL Python
-│   ├── etl/        # Migração MySQL→Supabase
-│   ├── adapters/   # Conectores
-│   └── utils/      # Utilitários
-├── config/         # Mapeamentos
-├── docs/           # Documentação
-└── netlify/        # Funções serverless
-```
-
-## 🌐 Deploy
-
-### GitHub Pages (Automático)
-
-1. **Requisito:** O repositório deve ser Público (ou você deve ter GitHub Pro).
-2. O deploy é feito via GitHub Actions na branch `main`.
-3. Configure `VITE_WEBHOOK_URL` em **Settings > Secrets > Actions**.
-4. Em **Settings > Pages**, selecione Source: `Deploy from a branch` e Branch: `gh-pages`.
-
-## 📄 Licença
-
-MIT
+*   `streamlit_app.py`: Interface principal e lógica.
+*   `.streamlit/config.toml`: Configuração do Tema Dark Premium.
+*   `services/`: Integração com N8N.

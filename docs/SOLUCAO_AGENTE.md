@@ -1,5 +1,7 @@
 # 🚨 ATENÇÃO: COMO LIGAR O CÉREBRO DO AGENTE 🚨
 
+> **LEGADO:** este documento é do stack antigo (Netlify + Gemini). No app Streamlit (`streamlit_app.py`), a integração atual é via webhook N8N (`WEBHOOK_URL`).
+
 O agente está "desligado" porque o servidor da Netlify não tem a senha dele. O arquivo `.env` que está no seu computador **NÃO** sobe para internet (por segurança).
 
 Você precisa fazer isso manualmente UMA VEZ. Siga os passos:
@@ -7,7 +9,7 @@ Você precisa fazer isso manualmente UMA VEZ. Siga os passos:
 ### PASSO 1: Copie esta Chave
 Selecione e copie o código abaixo (essa é a senha que está no seu computador):
 
-`AIzaSyB-4H-QFMo78Mi_DSzeE7S5soa6-zDbLTY`
+`<SUA_CHAVE_GEMINI_AQUI>`
 
 ---
 

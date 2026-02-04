@@ -1,5 +1,7 @@
 # Passo a Passo Atualizado (Foco em Produção) 🚀
 
+> **LEGADO:** este documento é do stack antigo (Netlify). O app atual publicado é o **Streamlit** (`streamlit_app.py`) e usa `WEBHOOK_URL` (N8N) via Secrets/variáveis de ambiente.
+
 Como o simulador local (`netlify dev`) deu erro no seu Windows, o caminho mais fácil e confiável é atualizar o site real (`nbl.golfine.com.br`).
 
 ## 1. Enviar as Mudanças para o GitHub
@@ -23,7 +25,7 @@ O novo código **precisa** da chave da API para funcionar. Como não enviamos o 
 3.  Vá em **Site configuration** > **Environment variables**.
 4.  Clique em **Add a variable**.
     -   **Key**: `GEMINI_API_KEY`
-    -   **Value**: `AIzaSyB-4H-QFMo78Mi_DSzeE7S5soa6-zDbLTY`
+    -   **Value**: `<SUA_CHAVE_GEMINI_AQUI>`
 5.  Clique em **Create variable**.
 6.  Vá na aba **Deploys** e clique em **Trigger deploy** (ou espere ele detectar o push do passo 1).
 

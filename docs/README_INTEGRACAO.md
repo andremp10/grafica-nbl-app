@@ -1,5 +1,7 @@
 # Guia de Integração: Gemini + Netlify Functions
 
+> **LEGADO:** este documento é do stack antigo (Vite + Netlify Functions). O app atual em produção neste repositório é o **Streamlit** (`streamlit_app.py`) com webhook N8N.
+
 A integração foi modificada para ser **segura** e **profissional**. Agora, a lógica de inteligência artificial roda no backend (Netlify Functions), protegendo sua chave de API e permitindo controle total.
 
 ## 🚀 Como Rodar o Projeto

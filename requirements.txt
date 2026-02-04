@@ -1,5 +1,8 @@
-# ETL Dependencies
-python-dotenv>=1.0.0,<2
-mysql-connector-python>=8.0.0,<9
-psycopg2-binary>=2.9.0,<3
-supabase>=2.0.0,<3
+streamlit
+requests
+python-dotenv
+pandas
+plotly
+sqlalchemy
+mysql-connector-python
+supabase
