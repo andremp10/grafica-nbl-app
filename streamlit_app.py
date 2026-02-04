@@ -410,7 +410,21 @@ def render_status_view():
 
     st.divider()
 
-    status_options = sorted(base_df["status_pedido"].dropna().astype(str).unique().tolist())
+    
+    # Custom sort for essential statuses
+    pipeline_order = {
+        "Problema no Arquivo": 0,
+        "Em Análise": 1,
+        "Em Produção": 2,
+        "Enviado": 3,
+        "Finalizado": 4,
+        "Cancelado": 5,
+        "Aguardando": 6
+    }
+    
+    unique_statuses = base_df["status_pedido"].dropna().astype(str).unique().tolist()
+    status_options = sorted(unique_statuses, key=lambda x: pipeline_order.get(x, 99))
+
     col_a, col_b, col_c, col_d = st.columns([2, 1, 1, 1])
     with col_a:
         selected_status = st.multiselect(
@@ -507,8 +521,8 @@ def render_status_view():
 
 
 def render_finance_view():
-    st.markdown("### 💰 Controladoria Financeira")
-    st.caption("Snapshot diário do financeiro (atualizado 1x por dia) - dados do Supabase")
+    st.markdown("### 💰 Controladoria & Vendas")
+    st.caption("Visão híbrida: Fluxo de Caixa (Realizado) e Performance de Vendas (Pedidos).")
 
     if not is_connected():
         st.warning("⚠️ Supabase não configurado.")
@@ -516,172 +530,132 @@ def render_finance_view():
 
     st.divider()
 
-    snapshot = fetch_snapshot_meta()
-    snapshot_key = snapshot.get("cache_key")
-    if snapshot.get("snapshot_finished_at"):
-        st.caption(f"Última atualização: `{_format_iso_dt(snapshot.get('snapshot_finished_at'))}`")
-
-    col_f1, col_f2 = st.columns([2, 2])
+    # --- FILTROS GERAIS ---
+    col_f1, col_f2 = st.columns([2, 1])
     hoje = datetime.now()
-    comp_inicio_default = (hoje - timedelta(days=180)).replace(day=1)
+    comp_inicio_default = (hoje - timedelta(days=30)).replace(day=1)
 
     with col_f1:
         competencia = st.date_input(
-            "Competência",
+            "Período de Análise",
             value=(comp_inicio_default, hoje),
-            key="fin_competencia",
+            key="fin_competencia_hybrid",
         )
-    with col_f2:
-        desc_search = st.text_input("Descrição (busca livre)", key="fin_desc_search")
-
+    
     comp_inicio, comp_fim = _to_date_bounds(competencia)
+    snapshot = fetch_snapshot_meta()
+    snapshot_key = snapshot.get("cache_key")
 
-    with st.spinner("Carregando lançamentos do snapshot..."):
-        # First fetch to get categories (optional, or separate small query)
-    # Ideally should be a separate lightweight query, but for now filtering on result is fine if dataset small, 
-    # or use distinct query. Let's just fetch default list for now or keep "Todas".
-    # For optimized category fetch we would need a specific distinct fetcher.
-    # Let's use the generic fetch just for determining dynamic categories if needed 
-    # OR better: just keep static list or distinct RPC in future.
-    # For now, let's just proceed to KPI fetch.    )
-        base_df = fetch_view_data(
+    # --- ABA 1: FLUXO DE CAIXA (REALIZADO) ---
+    st.markdown("#### 💵 Fluxo de Caixa (Realizado)")
+    
+    with st.spinner("Analisando caixa..."):
+        df_fin = fetch_view_data(
             view_name="vw_dashboard_financeiro",
             start_date=comp_inicio,
             end_date=comp_fim,
             date_column="competencia_mes",
             snapshot_key=snapshot_key,
         )
-    base_df = _normalize_financeiro_df(base_df)
-    if base_df.empty:
-        st.info("Nenhum lançamento encontrado no período.")
-        return
 
-    tipos = sorted(base_df["tipo"].dropna().astype(str).unique().tolist())
-    status_list = sorted(base_df["status_texto"].dropna().astype(str).unique().tolist())
-    categorias = sorted(base_df["categoria"].dropna().astype(str).unique().tolist())
+    if not df_fin.empty:
+        df_fin = _normalize_financeiro_df(df_fin)
+        
+        # Filtro de Tipo (Removido da UI, mas se existir logica residual, limpar)
+        # df_fin já vem filtrado por data.
 
-    col_f6, col_f7 = st.columns([1, 1])
-    with col_f6:
-         sort_field = st.selectbox(
-            "Ordenar por",
-            ["Vencimento", "Valor", "Competência", "Descrição"],
-            key="fin_sort_field",
-        )
-    with col_f7:
-        sort_desc = st.checkbox("Decrescente", value=True, key="fin_sort_desc")
+        total_entradas = df_fin[df_fin["tipo"] == "Entrada"]["valor"].sum()
+        total_saidas = df_fin[df_fin["tipo"] == "Saída"]["valor"].sum()
+        saldo = total_entradas - total_saidas
 
-    df = base_df.copy()
-    if desc_search:
-        df = df[df["descricao"].str.contains(desc_search, case=False, na=False)]
-    if tipo_filter:
-        df = df[df["tipo"].isin(tipo_filter)]
+        k1, k2, k3 = st.columns(3)
+        k1.metric("🟢 Receitas Totais", format_currency(total_entradas))
+        k2.metric("🔴 Despesas Totais", format_currency(total_saidas))
+        k3.metric("💰 Resultado Líquido", format_currency(saldo), delta=format_currency(saldo))
+        
+        # --- DESPESAS POR CATEGORIA (Opcional - Validado 63% Integrity) ---
+        if total_saidas > 0:
+            st.caption("Detalhamento de Despesas (Principais Custos)")
+            df_saidas = df_fin[df_fin["tipo"] == "Saída"].copy()
+            if not df_saidas.empty:
+                # Top 5 categorias
+                top_despesas = df_saidas.groupby("categoria")["valor"].sum().sort_values(ascending=False).head(5)
+                # Chart horizontal
+                st.bar_chart(top_despesas, color="#e74c3c", height=200)
 
-    # Simplified: no status/category filter logic exposed
-    # if status_filter... (removed)
-
-    col_f6, col_f7 = st.columns([1, 1])
-    # Simplified UI - Default filters are hidden but working
-    # Basic filters only
-    col_f3, col_f4 = st.columns([1, 1])
-    with col_f3:
-        # Default all types selected but hidden to user if they want simple
-        # But let's show basic Type filter as it is useful
-        tipo_filter = st.multiselect("Tipo", tipos, default=tipos, key="fin_tipo")
-    with col_f4:
-         # Simplified Status -> Just "Pendentes" vs "Realizados" checkbox?
-         # Or keep it simple. Let's hide detailed status and category for "Simple Mode".
-         # User asked for "dados basicos mesmo".
-         only_pending = st.checkbox("Apenas Pendentes/Atrasados", value=False)
-
-    status_filter = [] 
-    categoria_filter = []
-    
-    # Logic for simplified filters
-    if only_pending:
-        df = df[~df["is_realizado"]]
-
-    if "valor" in df.columns and not df["valor"].empty:
-        min_valor = float(df["valor"].min())
-        max_valor = float(df["valor"].max())
-        if max_valor > min_valor:
-            faixa = st.slider(
-                "Faixa de valor",
-                min_value=min_valor,
-                max_value=max_valor,
-                value=(min_valor, max_valor),
-                key="fin_valor_range",
-            )
-            df = df[(df["valor"] >= faixa[0]) & (df["valor"] <= faixa[1])]
-
-    sort_map = {
-        "Vencimento": "data_vencimento",
-        "Valor": "valor",
-        "Competência": "competencia_mes",
-        "Descrição": "descricao",
-    }
-    sort_col = sort_map.get(sort_field)
-    if sort_col and sort_col in df.columns:
-        df = df.sort_values(by=sort_col, ascending=not sort_desc, na_position="last")
-
-    if df.empty:
-        st.info("Nenhum lançamento encontrado com os filtros dinâmicos.")
-        return
-
-    tipo_series = df["tipo"].astype(str).str.lower()
-    entradas = float(df.loc[tipo_series.str.contains("entrada", na=False), "valor"].sum())
-    saidas = float(df.loc[tipo_series.str.contains("saída|saida", na=False), "valor"].sum())
-    saldo = entradas - saidas
-    kpis = {"entradas": entradas, "saidas": saidas, "saldo": saldo, "count": int(len(df))}
-
-    c1, c2, c3, c4 = st.columns(4)
-    with c1:
-        st.markdown(kpi_card("Entradas", kpis.get("entradas", 0.0), color="up"), unsafe_allow_html=True)
-    with c2:
-        st.markdown(kpi_card("Saidas", kpis.get("saidas", 0.0), color="down"), unsafe_allow_html=True)
-    with c3:
-        saldo = float(kpis.get("saldo", 0.0))
-        st.markdown(kpi_card("Saldo", saldo, color="up" if saldo >= 0 else "down"), unsafe_allow_html=True)
-    with c4:
-        st.markdown(kpi_card("Registros", int(kpis.get("count", 0))), unsafe_allow_html=True)
+    else:
+        st.info("Sem dados financeiros para o período.")
 
     st.divider()
 
-    if {"competencia_mes", "tipo", "valor"}.issubset(df.columns) and not df.empty:
-        df_chart = (
-            df.groupby(["competencia_mes", "tipo"], dropna=False)["valor"]
-            .sum()
-            .unstack(fill_value=0)
-            .sort_index()
-        )
-        st.bar_chart(df_chart, height=300)
+    # --- ABA 2: INSIGHTS DE VENDAS (PEDIDOS) ---
+    st.markdown("#### 📈 Performance de Vendas (Pedidos)")
+    st.caption("Análise baseada nos pedidos gerados no período (independente do pagamento).")
 
-    st.markdown("#### 🧾 Extrato de Lancamentos")
-    preferred_order = [
-        "descricao",
-        "tipo",
-        "valor",
-        "competencia_mes",
-        "data_vencimento",
-        "data_pagamento",
-        "status_texto",
-        "categoria",
-        "is_atrasado",
-        "is_realizado",
-    ]
-    preferred_config = {
-        "descricao": st.column_config.TextColumn("Descricao", width="large"),
-        "tipo": st.column_config.TextColumn("Tipo", width="small"),
-        "valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-        "competencia_mes": st.column_config.DatetimeColumn("Competência", format="MM/YYYY"),
-        "data_vencimento": st.column_config.DatetimeColumn("Vencimento", format="DD/MM/YYYY"),
-        "data_pagamento": st.column_config.DatetimeColumn("Pagamento", format="DD/MM/YYYY"),
-        "status_texto": st.column_config.TextColumn("Status"),
-        "categoria": st.column_config.TextColumn("Categoria"),
-        "is_atrasado": st.column_config.CheckboxColumn("Atrasado?"),
-        "is_realizado": st.column_config.CheckboxColumn("Realizado?"),
-    }
-    _safe_dataframe(df, preferred_order, preferred_config, height=360)
-    st.caption(f"Exibindo {len(df)} de {len(base_df)} lançamentos no período.")
+    with st.spinner("Analisando vendas..."):
+        df_pedidos = fetch_view_data(
+            view_name="vw_dashboard_pedidos",
+            start_date=comp_inicio,
+            end_date=comp_fim,
+            date_column="data_criacao",
+            snapshot_key=snapshot_key,
+        )
+
+    if df_pedidos.empty:
+        st.info("Nenhum pedido encontrado no período.")
+        return
+
+    # Processamento de Vendas
+    df_pedidos["valor_total"] = pd.to_numeric(df_pedidos["valor_total"], errors="coerce").fillna(0.0)
+    
+    # 1. Receita por Cliente (Pareto)
+    st.markdown("##### 🏆 Maiores Clientes")
+    top_clientes = (
+        df_pedidos.groupby("cliente_nome")["valor_total"]
+        .sum()
+        .sort_values(ascending=False)
+        .head(10)
+        .reset_index()
+    )
+    top_clientes.columns = ["Cliente", "Total Comprado"]
+    
+    # Chart e Tabela lado a lado
+    c_chart, c_table = st.columns([2, 1])
+    with c_chart:
+        st.bar_chart(top_clientes.set_index("Cliente"), color="#9b59b6")
+    with c_table:
+        st.dataframe(
+            top_clientes,
+            column_config={
+                "Total Comprado": st.column_config.NumberColumn(format="R$ %.2f")
+            },
+            hide_index=True,
+            use_container_width=True
+        )
+
+    st.divider()
+
+    # 2. Maiores Pedidos da Semana/Período
+    st.markdown("##### 📦 Maiores Pedidos do Período")
+    top_pedidos = (
+        df_pedidos[["cliente_nome", "data_criacao", "valor_total", "qtde_itens", "status_pedido"]]
+        .sort_values(by="valor_total", ascending=False)
+        .head(10)
+    )
+    
+    st.dataframe(
+        top_pedidos,
+        column_config={
+            "cliente_nome": st.column_config.TextColumn("Cliente", width="large"),
+            "data_criacao": st.column_config.DatetimeColumn("Data", format="DD/MM/YYYY"),
+            "valor_total": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+            "qtde_itens": st.column_config.NumberColumn("Itens"),
+            "status_pedido": st.column_config.TextColumn("Status"),
+        },
+        hide_index=True,
+        use_container_width=True
+    )
+
 
 
 # =============================================================================

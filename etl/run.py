@@ -283,6 +283,42 @@ EXEC_ORDER = [
 
 def transform_row(row: dict, table: str, mapping: Dict[str, str]) -> Optional[dict]:
     """Transforma uma row do MySQL para o formato do Supabase."""
+# ============================================================================
+# REGRAS DE CATEGORIZAÇÃO (PATCH MIGRATION 005)
+# ============================================================================
+CAT_RULES = {
+    "AGUA": "d7b04caa-404f-5c37-a9d7-fde38ed1f758",
+    "PAPEL": "217b5ba5-6e58-5614-821d-595c3db12f63",
+    "PRO_SHEILA": "d9d062b7-9175-52eb-9e79-a8833f4155b2",
+    "PRO_HORACIO": "c4f57a2e-90c4-585b-875a-e7740cb60c2d",
+    "PRO_MAKLEN": "ca0aa9ff-9d75-5b91-be7e-15d0afda61b0",
+    "PRO_GERAL": "fbafcd44-3c3c-5279-8645-a211a69e7335",
+}
+
+def apply_categorization_rules(row: dict) -> dict:
+    """Aplica regras de categorização para preencher categorias nulas."""
+    if row.get("categoria_id"):
+        return row
+    
+    desc = str(row.get("descricao", "")).upper()
+    
+    if "CAGECE" in desc or "COELCE" in desc:
+        row["categoria_id"] = CAT_RULES["AGUA"]
+    elif any(x in desc for x in ["PAPEL", "COUCHE", "PAPEIS"]):
+        row["categoria_id"] = CAT_RULES["PAPEL"]
+    elif "PRO-LABORE SHEILA" in desc:
+        row["categoria_id"] = CAT_RULES["PRO_SHEILA"]
+    elif "PRO-LABORE HORACIO" in desc:
+        row["categoria_id"] = CAT_RULES["PRO_HORACIO"]
+    elif "PRO-LABORE MAKLEN" in desc:
+        row["categoria_id"] = CAT_RULES["PRO_MAKLEN"]
+    elif "PRO-LABORE" in desc:
+        row["categoria_id"] = CAT_RULES["PRO_GERAL"]
+        
+    return row
+
+def transform_row(row: dict, table: str, mapping: dict) -> Optional[dict]:
+    """Transforma uma row do MySQL para o formato do Supabase."""
     new_row = {}
     legacy_id = row.get("id")
     
@@ -350,6 +386,10 @@ def transform_row(row: dict, table: str, mapping: Dict[str, str]) -> Optional[di
         # Default: manter valor
         else:
             new_row[pg_col] = val
+    
+    # --- AUTO-CATEGORIZATION PATCH ---
+    if table == "is_financeiro_lancamentos":
+        new_row = apply_categorization_rules(new_row)
     
     # Limpar valores vazios problemáticos
     if "cupom" in new_row and not new_row.get("cupom"):
