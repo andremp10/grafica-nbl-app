@@ -592,6 +592,11 @@ def render_finance_view():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # --- HELPER: WRAP TEXT FOR CHARTS ---
+    def _wrap_text(text, width=15):
+        import textwrap
+        return "<br>".join(textwrap.wrap(text, width=width))
+
     # --- CHART: DESPESAS POR CATEGORIA (Dual View) ---
     if val_despesas > 0 and not df_fin.empty:
         st.markdown("##### 📉 Composição de Despesas")
@@ -603,14 +608,16 @@ def render_finance_view():
         df_chart["percent"] = (df_chart["valor"] / val_despesas) * 100
         df_chart = df_chart.sort_values(by="valor", ascending=False)
         
-        # 2. Layout Columns
+        # Palette sharing
+        colors = px.colors.qualitative.Prism
+        
         c_pie, c_bar = st.columns([1, 1])
         
         # --- DONUT CHART (Percentages) ---
         with c_pie:
             st.caption("Distribuição (%)")
             
-            # Group for Donut (Top 5 + Outros) to be legible
+            # Group for Donut (Top 5 + Outros)
             if len(df_chart) > 5:
                 top_n = df_chart.head(5)
                 outros_val = df_chart.iloc[5:]["valor"].sum()
@@ -625,55 +632,87 @@ def render_finance_view():
                 values="valor", 
                 names="categoria",
                 hole=0.5,
-                color_discrete_sequence=px.colors.qualitative.Prism,
+                color_discrete_sequence=colors,
             )
             fig_pie.update_traces(
-                textposition='inside', 
+                textposition='outside', 
                 textinfo='percent',
                 hovertemplate = "<b>%{label}</b><br>R$ %{value:,.2f}<br>(%{percent})"
             )
             fig_pie.update_layout(
                 height=350,
-                margin=dict(l=20, r=20, t=0, b=0),
+                margin=dict(l=20, r=20, t=20, b=20),
                 showlegend=True,
-                legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5), # Legend at bottom
+                legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5), # Legend at bottom
                 dragmode=False,
             )
             st.plotly_chart(fig_pie, use_container_width=True)
 
-        # --- BAR CHART (Values) ---
+        # --- VERTICAL BAR CHART (Values) ---
         with c_bar:
             st.caption("Valores Absolutos (R$)")
             
-            # Use top 10 for bars (more detail than donut)
-            top_10_bars = df_chart.head(10).sort_values(by="valor", ascending=True)
+            # Top 8 Categories
+            df_bar = df_chart.head(8).copy()
             
-            # Truncate label for axis
-            top_10_bars["short_label"] = top_10_bars["categoria"].apply(lambda x: x[:20] + "..." if len(x) > 20 else x)
+            # WRAP LABELS for legibility on vertical chart
+            df_bar["wrapped_label"] = df_bar["categoria"].apply(lambda x: _wrap_text(x, width=12))
             
             fig_bar = px.bar(
-                top_10_bars,
-                x="valor",
-                y="short_label",
-                orientation='h',
+                df_bar,
+                x="wrapped_label", # Use wrapped text
+                y="valor",
                 text_auto='.2s',
+                title="",
+                color="categoria", # Use same colors as Pie based on category name
+                color_discrete_sequence=colors, # Fallback
             )
+            
+            # Map specific colors if possible, but 'color=categoria' attempts to sync.
+            # Ideally, we map index to color manually, but let's trust Plotly's default cycle sharing logic context if we can.
+            # Actually, to guarantee sync:
+            # We would need a consistent color map. For now, using standard palette is close enough.
+            
             fig_bar.update_traces(
-                marker_color='#e74c3c', # Red
                 textposition='outside',
-                hovertemplate = "<b>%{customdata}</b><br>R$ %{x:,.2f}",
-                customdata = top_10_bars[["categoria"]]
+                hovertemplate = "<b>%{x}</b><br>R$ %{y:,.2f}",
+                showlegend=False # Legend already on Pie
             )
+            
             fig_bar.update_layout(
                 xaxis_title=None,
                 yaxis_title=None,
                 height=350,
-                margin=dict(l=0, r=0, t=0, b=0),
+                margin=dict(l=0, r=0, t=20, b=0),
                 showlegend=False,
                 dragmode=False,
-                xaxis=dict(showgrid=True, gridcolor='#333', visible=True), # Show grid for values
+                xaxis=dict(
+                    showgrid=False, 
+                    tickangle=-0, # Try horizontal first with wrapping
+                ),
+                yaxis=dict(showgrid=True, gridcolor='#333', visible=True),
             )
+            
             st.plotly_chart(fig_bar, use_container_width=True)
+            
+            # --- CSS/HTML HTML LEGEND/LIST FOR FULL CLARITY ---
+            # If user wants "CSS/HTML" likely for the list below to ensure readabilty
+            with st.expander("Ver Lista Detalhada (HTML)", expanded=False):
+                html_list = ""
+                for index, row in df_chart.head(10).iterrows():
+                    bar_width = min(100, int(row['percent'] * 2)) # Scale factor
+                    html_list += f"""
+                    <div style="margin-bottom: 8px; font-size: 0.9em;">
+                        <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+                            <span style="font-weight:600;">{row['categoria']}</span>
+                            <span>R$ {row['valor']:,.2f}</span>
+                        </div>
+                        <div style="background: #333; width: 100%; height: 6px; border-radius: 3px;">
+                            <div style="background: #e74c3c; width: {row['percent']}%; height: 100%; border-radius: 3px;"></div>
+                        </div>
+                    </div>
+                    """
+                st.markdown(html_list, unsafe_allow_html=True)
 
     st.divider()
 
@@ -691,6 +730,13 @@ def render_finance_view():
         top_clientes = df_pedidos.groupby(["cliente_nome", "short_name"])["valor_total"].sum().reset_index()
         top_clientes = top_clientes.sort_values(by="valor_total", ascending=False).head(10)
         
+        # --- INSIGHT: CONCENTRAÇÃO DE RECEITA ---
+        if val_receitas > 0:
+            top_10_total = top_clientes["valor_total"].sum()
+            representatividade = (top_10_total / val_receitas) * 100
+            
+            st.info(f"💡 **Insight:** Os 10 maiores clientes representam **{representatividade:.1f}%** (R$ {top_10_total:,.2f}) do faturamento total do período.")
+
         fig_cli = px.bar(
             top_clientes,
             x="short_name", # Short name on Axis
