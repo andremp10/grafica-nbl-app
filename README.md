@@ -1,20 +1,84 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Gráfica NBL Admin
 
-# Run and deploy your AI Studio app
+Sistema de gestão inteligente para gráfica com dashboard, pedidos e chat IA.
 
-This contains everything you need to run your app locally.
+## 🚀 Stack
 
-View your app in AI Studio: https://ai.studio/apps/drive/1mSiva8Olk-tzB32CQmXkfjlhpphNp0AQ
+- **Frontend**: React + TypeScript + Vite
+- **Styling**: Tailwind CSS
+- **IA**: Google Gemini via Netlify Functions
+- **Backend/ETL**: Python (migração MySQL → Supabase)
 
-## Run Locally
+## ⚡ Quick Start
 
-**Prerequisites:**  Node.js
+### Frontend (React)
 
+```bash
+# Instalar dependências
+npm install
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+# Rodar em desenvolvimento
+npm run dev
+
+# Build para produção
+npm run build
+```
+
+### ETL (Python)
+
+```bash
+# Criar ambiente virtual
+python -m venv venv
+venv\Scripts\activate  # Windows
+
+# Instalar dependências
+pip install -r requirements.txt
+
+# Configurar variáveis
+cp .env.example .env
+# Editar .env com suas credenciais
+
+# Rodar migração
+python -m src.main --sql ./sql_input/seu_dump.sql
+```
+
+## 🔧 Configuração
+
+### Variáveis de Ambiente
+
+Copie `.env.example` para `.env` e configure:
+
+| Variável | Descrição |
+|----------|-----------|
+| `SUPABASE_URL` | URL do projeto Supabase |
+| `SUPABASE_KEY` | Service role key |
+| `PG_HOST` | Host do Postgres |
+| `GEMINI_API_KEY` | Chave da API Gemini |
+| `VITE_WEBHOOK_URL` | (Opcional) Webhook externo para IA |
+
+## 📁 Estrutura
+
+```
+├── components/     # Componentes React
+├── services/       # Serviços (IA, API)
+├── src/            # ETL Python
+│   ├── etl/        # Migração MySQL→Supabase
+│   ├── adapters/   # Conectores
+│   └── utils/      # Utilitários
+├── config/         # Mapeamentos
+├── docs/           # Documentação
+└── netlify/        # Funções serverless
+```
+
+## 🌐 Deploy
+
+### Netlify (Frontend)
+
+1. Conectar repo no Netlify
+2. Build command: `npm run build`
+3. Publish directory: `dist`
+4. Configurar variáveis de ambiente
+
+## 📄 Licença
+
+MIT

@@ -1,6 +1,57 @@
-node_modules
-dist
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
 .DS_Store
-coverage
-.netlify
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# ETL outputs (regeneráveis)
+output/
+sql_input/
+exports/
+
+# Netlify
+.netlify/
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Misc
+*.bak
+*.old
+*_copy*
+*.tmp
