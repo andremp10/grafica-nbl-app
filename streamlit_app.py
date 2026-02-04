@@ -3,14 +3,13 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional, Sequence
 
+import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
 from data.supabase_client import is_connected
 from data.supabase_repo import (
     fetch_financeiro,
-    fetch_kpis_financeiro,
-    fetch_kpis_pedidos,
     fetch_pedidos,
     fetch_snapshot_meta,
 )
@@ -161,6 +160,45 @@ def _safe_dataframe(df, preferred_order, preferred_config, **kwargs):
     st.dataframe(df, **dataframe_kwargs)
 
 
+def _normalize_pedidos_df(df):
+    if df.empty:
+        return df
+    out = df.copy()
+    for col in ["data_criacao", "data_prazo_validada"]:
+        if col in out.columns:
+            out[col] = pd.to_datetime(out[col], errors="coerce", utc=True)
+    if "valor_total" in out.columns:
+        out["valor_total"] = pd.to_numeric(out["valor_total"], errors="coerce").fillna(0.0)
+    if "dias_em_atraso" in out.columns:
+        out["dias_em_atraso"] = pd.to_numeric(out["dias_em_atraso"], errors="coerce").fillna(0).astype(int)
+    if "status_pedido" in out.columns:
+        out["status_pedido"] = out["status_pedido"].fillna("Sem Status").astype(str)
+    if "cliente_nome" in out.columns:
+        out["cliente_nome"] = out["cliente_nome"].fillna("Cliente sem nome").astype(str)
+    for col in ["is_atrasado", "is_finalizado"]:
+        if col in out.columns:
+            out[col] = out[col].fillna(False).astype(bool)
+    return out
+
+
+def _normalize_financeiro_df(df):
+    if df.empty:
+        return df
+    out = df.copy()
+    for col in ["data_vencimento", "data_pagamento", "data_emissao", "competencia_mes"]:
+        if col in out.columns:
+            out[col] = pd.to_datetime(out[col], errors="coerce", utc=True)
+    if "valor" in out.columns:
+        out["valor"] = pd.to_numeric(out["valor"], errors="coerce").fillna(0.0)
+    for col in ["tipo", "status_texto", "categoria", "descricao"]:
+        if col in out.columns:
+            out[col] = out[col].fillna("-").astype(str)
+    for col in ["is_atrasado", "is_realizado"]:
+        if col in out.columns:
+            out[col] = out[col].fillna(False).astype(bool)
+    return out
+
+
 # =============================================================================
 # VIEW: INSTRUCOES
 # =============================================================================
@@ -302,29 +340,34 @@ def render_status_view():
     if snapshot.get("snapshot_finished_at"):
         st.caption(f"Última atualização: `{_format_iso_dt(snapshot.get('snapshot_finished_at'))}`")
 
-    col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 1, 1])
+    col_f1, col_f2 = st.columns([2, 2])
     with col_f1:
         data_range = st.date_input(
-            "Periodo",
+            "Período",
             value=(datetime.now() - timedelta(days=30), datetime.now()),
             key="pcp_date_range",
         )
     with col_f2:
-        cliente_search = st.text_input("🔍 Buscar Cliente", key="pcp_cliente_search")
-    with col_f3:
-        status_filter = st.text_input("Status (contem)", key="pcp_status_filter")
-    with col_f4:
-        show_atrasados = st.checkbox("Apenas Atrasados", key="pcp_atrasados")
-        show_finalizados = st.checkbox("Apenas Finalizados", key="pcp_finalizados")
+        cliente_search = st.text_input("Cliente (busca livre)", key="pcp_cliente_search")
 
     data_inicio, data_fim = _to_date_bounds(data_range)
 
-    with st.spinner("Carregando KPIs..."):
-        kpis = fetch_kpis_pedidos(data_inicio, data_fim, snapshot_key=snapshot_key)
+    with st.spinner("Carregando pedidos do snapshot..."):
+        base_df = fetch_pedidos(
+            start_date=data_inicio,
+            end_date=data_fim,
+            page_size=0,
+            snapshot_key=snapshot_key,
+        )
+    base_df = _normalize_pedidos_df(base_df)
 
-    total = int(kpis.get("total_pedidos", 0))
-    atrasados = int(kpis.get("total_atrasados", 0))
-    finalizados = int(kpis.get("total_finalizados", 0))
+    if base_df.empty:
+        st.info("Nenhum pedido no período selecionado.")
+        return
+
+    total = int(len(base_df))
+    atrasados = int(base_df["is_atrasado"].sum()) if "is_atrasado" in base_df.columns else 0
+    finalizados = int(base_df["is_finalizado"].sum()) if "is_finalizado" in base_df.columns else 0
     em_andamento = max(total - finalizados, 0)
 
     c1, c2, c3, c4 = st.columns(4)
@@ -339,44 +382,95 @@ def render_status_view():
 
     st.divider()
 
-    with st.spinner("Carregando pedidos..."):
-        df = fetch_pedidos(
-            start_date=data_inicio,
-            end_date=data_fim,
-            status=status_filter or None,
-            is_atrasado=True if show_atrasados else None,
-            is_finalizado=True if show_finalizados else None,
-            client_name=cliente_search or None,
-            page_size=500,
-            snapshot_key=snapshot_key,
+    status_options = sorted(base_df["status_pedido"].dropna().astype(str).unique().tolist())
+    col_a, col_b, col_c, col_d = st.columns([2, 1, 1, 1])
+    with col_a:
+        selected_status = st.multiselect(
+            "Status",
+            options=status_options,
+            placeholder="Todos",
+            key="pcp_status_multi",
         )
+    with col_b:
+        situacao = st.selectbox(
+            "Situação",
+            ["Todos", "Em andamento", "Atrasados", "Finalizados", "No prazo"],
+            key="pcp_situacao",
+        )
+    with col_c:
+        sort_field = st.selectbox(
+            "Ordenar por",
+            ["Criação", "Prazo", "Valor", "Dias em atraso"],
+            key="pcp_sort_field",
+        )
+    with col_d:
+        sort_desc = st.checkbox("Descendente", value=True, key="pcp_sort_desc")
+
+    df = base_df.copy()
+    if selected_status:
+        df = df[df["status_pedido"].isin(selected_status)]
+    if cliente_search:
+        df = df[df["cliente_nome"].str.contains(cliente_search, case=False, na=False)]
+    if situacao == "Atrasados":
+        df = df[df["is_atrasado"]]
+    elif situacao == "Finalizados":
+        df = df[df["is_finalizado"]]
+    elif situacao == "Em andamento":
+        df = df[~df["is_finalizado"]]
+    elif situacao == "No prazo":
+        df = df[(~df["is_finalizado"]) & (~df["is_atrasado"])]
+
+    if "valor_total" in df.columns and not df["valor_total"].empty:
+        min_valor = float(df["valor_total"].min())
+        max_valor = float(df["valor_total"].max())
+        if max_valor > min_valor:
+            faixa = st.slider(
+                "Faixa de valor",
+                min_value=min_valor,
+                max_value=max_valor,
+                value=(min_valor, max_valor),
+                key="pcp_valor_range",
+            )
+            df = df[(df["valor_total"] >= faixa[0]) & (df["valor_total"] <= faixa[1])]
+
+    sort_map = {
+        "Criação": "data_criacao",
+        "Prazo": "data_prazo_validada",
+        "Valor": "valor_total",
+        "Dias em atraso": "dias_em_atraso",
+    }
+    sort_column = sort_map.get(sort_field)
+    if sort_column and sort_column in df.columns:
+        df = df.sort_values(by=sort_column, ascending=not sort_desc, na_position="last")
 
     if df.empty:
-        st.info("Nenhum pedido encontrado com os filtros aplicados.")
+        st.info("Nenhum pedido encontrado com os filtros dinâmicos.")
         return
 
     preferred_order = [
-        "pedido_id",
         "cliente_nome",
         "status_pedido",
         "valor_total",
+        "qtde_itens",
+        "data_criacao",
         "data_prazo_validada",
         "dias_em_atraso",
         "is_atrasado",
         "is_finalizado",
     ]
     preferred_config = {
-        "pedido_id": st.column_config.TextColumn("Pedido", width="small"),
         "cliente_nome": st.column_config.TextColumn("Cliente", width="large"),
         "status_pedido": st.column_config.TextColumn("Status", width="medium"),
         "valor_total": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+        "qtde_itens": st.column_config.NumberColumn("Itens", format="%d"),
+        "data_criacao": st.column_config.DatetimeColumn("Criado em", format="DD/MM/YYYY"),
         "data_prazo_validada": st.column_config.DatetimeColumn("Prazo", format="DD/MM/YYYY"),
         "dias_em_atraso": st.column_config.NumberColumn("Dias Atraso", format="%d"),
         "is_atrasado": st.column_config.CheckboxColumn("Atrasado?"),
         "is_finalizado": st.column_config.CheckboxColumn("Finalizado?"),
     }
     _safe_dataframe(df, preferred_order, preferred_config, height=420)
-    st.caption(f"Exibindo {len(df)} pedidos (maximo 500 por consulta).")
+    st.caption(f"Exibindo {len(df)} de {len(base_df)} pedidos no período.")
 
 
 # =============================================================================
@@ -399,37 +493,114 @@ def render_finance_view():
     if snapshot.get("snapshot_finished_at"):
         st.caption(f"Última atualização: `{_format_iso_dt(snapshot.get('snapshot_finished_at'))}`")
 
-    col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
+    col_f1, col_f2 = st.columns([2, 2])
     hoje = datetime.now()
-    comp_inicio_default = (hoje - timedelta(days=365)).replace(day=1)
+    comp_inicio_default = (hoje - timedelta(days=180)).replace(day=1)
 
     with col_f1:
         competencia = st.date_input(
-            "Competencia",
+            "Competência",
             value=(comp_inicio_default, hoje),
             key="fin_competencia",
         )
     with col_f2:
-        tipo_filter = st.selectbox("Tipo", ["Todos", "Entrada", "Saída"], key="fin_tipo")
-        status_filter = st.selectbox("Status", ["Todos", "Aberto", "Pago"], key="fin_status")
+        desc_search = st.text_input("Descrição (busca livre)", key="fin_desc_search")
 
     comp_inicio, comp_fim = _to_date_bounds(competencia)
 
-    base_df = fetch_financeiro(
-        start_date=comp_inicio,
-        end_date=comp_fim,
-        page_size=500,
-        snapshot_key=snapshot_key,
-    )
-    categories = ["Todas"]
-    if not base_df.empty and "categoria" in base_df.columns:
-        values = sorted({str(value) for value in base_df["categoria"].dropna().tolist() if str(value)})
-        categories.extend(values)
-    with col_f3:
-        cat_filter = st.selectbox("Categoria", categories, key="fin_categoria")
+    with st.spinner("Carregando lançamentos do snapshot..."):
+        base_df = fetch_financeiro(
+            start_date=comp_inicio,
+            end_date=comp_fim,
+            page_size=0,
+            snapshot_key=snapshot_key,
+        )
+    base_df = _normalize_financeiro_df(base_df)
+    if base_df.empty:
+        st.info("Nenhum lançamento encontrado no período.")
+        return
 
-    with st.spinner("Carregando KPIs..."):
-        kpis = fetch_kpis_financeiro(comp_inicio, comp_fim, snapshot_key=snapshot_key)
+    tipos = sorted(base_df["tipo"].dropna().astype(str).unique().tolist())
+    status_list = sorted(base_df["status_texto"].dropna().astype(str).unique().tolist())
+    categorias = sorted(base_df["categoria"].dropna().astype(str).unique().tolist())
+
+    col_f3, col_f4, col_f5 = st.columns([1, 1, 1])
+    with col_f3:
+        tipo_filter = st.multiselect("Tipo", tipos, default=tipos, key="fin_tipo")
+    with col_f4:
+        status_filter = st.multiselect("Status", status_list, default=status_list, key="fin_status")
+    with col_f5:
+        categoria_filter = st.multiselect(
+            "Categoria",
+            categorias,
+            default=categorias,
+            key="fin_categoria",
+        )
+
+    col_f6, col_f7 = st.columns([1, 1])
+    with col_f6:
+        situacao = st.selectbox(
+            "Situação",
+            ["Todos", "Apenas atrasados", "Apenas realizados", "Pendentes"],
+            key="fin_situacao",
+        )
+    with col_f7:
+        sort_field = st.selectbox(
+            "Ordenar por",
+            ["Vencimento", "Valor", "Competência", "Descrição"],
+            key="fin_sort_field",
+        )
+    sort_desc = st.checkbox("Ordenação descendente", value=True, key="fin_sort_desc")
+
+    df = base_df.copy()
+    if desc_search:
+        df = df[df["descricao"].str.contains(desc_search, case=False, na=False)]
+    if tipo_filter:
+        df = df[df["tipo"].isin(tipo_filter)]
+    if status_filter:
+        df = df[df["status_texto"].isin(status_filter)]
+    if categoria_filter:
+        df = df[df["categoria"].isin(categoria_filter)]
+
+    if situacao == "Apenas atrasados":
+        df = df[df["is_atrasado"]]
+    elif situacao == "Apenas realizados":
+        df = df[df["is_realizado"]]
+    elif situacao == "Pendentes":
+        df = df[~df["is_realizado"]]
+
+    if "valor" in df.columns and not df["valor"].empty:
+        min_valor = float(df["valor"].min())
+        max_valor = float(df["valor"].max())
+        if max_valor > min_valor:
+            faixa = st.slider(
+                "Faixa de valor",
+                min_value=min_valor,
+                max_value=max_valor,
+                value=(min_valor, max_valor),
+                key="fin_valor_range",
+            )
+            df = df[(df["valor"] >= faixa[0]) & (df["valor"] <= faixa[1])]
+
+    sort_map = {
+        "Vencimento": "data_vencimento",
+        "Valor": "valor",
+        "Competência": "competencia_mes",
+        "Descrição": "descricao",
+    }
+    sort_col = sort_map.get(sort_field)
+    if sort_col and sort_col in df.columns:
+        df = df.sort_values(by=sort_col, ascending=not sort_desc, na_position="last")
+
+    if df.empty:
+        st.info("Nenhum lançamento encontrado com os filtros dinâmicos.")
+        return
+
+    tipo_series = df["tipo"].astype(str).str.lower()
+    entradas = float(df.loc[tipo_series.str.contains("entrada", na=False), "valor"].sum())
+    saidas = float(df.loc[tipo_series.str.contains("saída|saida", na=False), "valor"].sum())
+    saldo = entradas - saidas
+    kpis = {"entradas": entradas, "saidas": saidas, "saldo": saldo, "count": int(len(df))}
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -444,51 +615,42 @@ def render_finance_view():
 
     st.divider()
 
-    with st.spinner("Carregando lancamentos..."):
-        status_code = None
-        if status_filter == "Aberto":
-            status_code = 1
-        elif status_filter == "Pago":
-            status_code = 2
-
-        df = fetch_financeiro(
-            start_date=comp_inicio,
-            end_date=comp_fim,
-            tipo=tipo_filter if tipo_filter != "Todos" else None,
-            status_codigo=status_code,
-            categoria=cat_filter if cat_filter != "Todas" else None,
-            page_size=500,
-            snapshot_key=snapshot_key,
-        )
-
-    if df.empty:
-        st.info("Nenhum lancamento encontrado para os filtros aplicados.")
-        return
-
     if {"competencia_mes", "tipo", "valor"}.issubset(df.columns):
-        df_chart = df.groupby(["competencia_mes", "tipo"], dropna=False)["valor"].sum().unstack(fill_value=0)
+        df_chart = (
+            df.groupby(["competencia_mes", "tipo"], dropna=False)["valor"]
+            .sum()
+            .unstack(fill_value=0)
+            .sort_index()
+        )
         st.bar_chart(df_chart, height=300)
 
     st.markdown("#### 🧾 Extrato de Lancamentos")
     preferred_order = [
-        "lancamento_id",
         "descricao",
         "tipo",
         "valor",
+        "competencia_mes",
         "data_vencimento",
+        "data_pagamento",
         "status_texto",
         "categoria",
+        "is_atrasado",
+        "is_realizado",
     ]
     preferred_config = {
-        "lancamento_id": st.column_config.TextColumn("ID", width="small"),
         "descricao": st.column_config.TextColumn("Descricao", width="large"),
         "tipo": st.column_config.TextColumn("Tipo", width="small"),
         "valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+        "competencia_mes": st.column_config.DatetimeColumn("Competência", format="MM/YYYY"),
         "data_vencimento": st.column_config.DatetimeColumn("Vencimento", format="DD/MM/YYYY"),
+        "data_pagamento": st.column_config.DatetimeColumn("Pagamento", format="DD/MM/YYYY"),
         "status_texto": st.column_config.TextColumn("Status"),
         "categoria": st.column_config.TextColumn("Categoria"),
+        "is_atrasado": st.column_config.CheckboxColumn("Atrasado?"),
+        "is_realizado": st.column_config.CheckboxColumn("Realizado?"),
     }
     _safe_dataframe(df, preferred_order, preferred_config, height=360)
+    st.caption(f"Exibindo {len(df)} de {len(base_df)} lançamentos no período.")
 
 
 # =============================================================================
@@ -565,14 +727,14 @@ def main():
     with st.sidebar:
         st.title("🎨 NBL Admin")
         if is_connected():
-            st.caption("v6.4 • 🟢 Supabase Conectado")
+            st.caption("v6.5 • 🟢 Supabase Conectado")
             meta = fetch_snapshot_meta()
             if meta.get("snapshot_finished_at"):
                 st.caption(f"Snapshot: {_format_iso_dt(meta.get('snapshot_finished_at'))}")
             if meta.get("is_running"):
                 st.caption("⏳ Atualização em andamento")
         else:
-            st.caption("v6.4 • 🔴 Supabase Offline")
+            st.caption("v6.5 • 🔴 Supabase Offline")
 
         st.divider()
         menu = {

@@ -17,6 +17,9 @@ DATE_MAX = "2100-12-31"
 PEDIDOS_COUNT_PROBES = ("pedido_id", "status_pedido", "cliente_nome")
 FINANCE_KPI_DEFAULT = {"entradas": 0.0, "saidas": 0.0, "saldo": 0.0, "count": 0}
 PEDIDOS_DATE_CUTOFF = pd.Timestamp("1900-01-01", tz="UTC")
+PEDIDOS_PLACEHOLDER_DATE_MAX = pd.Timestamp(
+    os.getenv("PEDIDOS_PLACEHOLDER_DATE_MAX", "2001-01-01"), tz="UTC"
+)
 POSTGREST_IN_CHUNK = int(os.getenv("POSTGREST_IN_CHUNK", "200"))
 POSTGREST_PAGE_ROWS = int(os.getenv("POSTGREST_PAGE_ROWS", "1000"))
 
@@ -237,6 +240,7 @@ def _aggregate_pedidos_items(items_df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
             df.loc[df[col] < PEDIDOS_DATE_CUTOFF, col] = pd.NaT
+            df.loc[df[col] <= PEDIDOS_PLACEHOLDER_DATE_MAX, col] = pd.NaT
 
     def agg_status(series: pd.Series) -> Optional[str]:
         values = sorted(
@@ -372,30 +376,38 @@ def _fetch_pedidos_from_tables(
     page: int,
     page_size: int,
 ) -> pd.DataFrame:
-    pedido_select = "id,cliente_id,total,frete_valor,created_at"
-    query = client.table("is_pedidos").select(pedido_select)
-    if start_date and end_date:
-        query = query.gte("created_at", f"{start_date}T00:00:00").lte("created_at", f"{end_date}T23:59:59")
-    query = query.order("created_at", desc=True)
+    if page_size <= 0:
+        pedidos_df = _fetch_all_pedidos_base(client=client, start_date=start_date, end_date=end_date)
+    else:
+        pedido_select = "id,cliente_id,total,frete_valor,created_at"
+        query = client.table("is_pedidos").select(pedido_select)
+        if start_date and end_date:
+            query = query.gte("created_at", f"{start_date}T00:00:00").lte(
+                "created_at", f"{end_date}T23:59:59"
+            )
+        query = query.order("created_at", desc=True)
 
-    start = page * page_size
-    end = start + page_size - 1
-    response = query.range(start, end).execute()
-    pedidos_rows = response.data or []
-    if not pedidos_rows:
+        start = page * page_size
+        end = start + page_size - 1
+        response = query.range(start, end).execute()
+        pedidos_rows = response.data or []
+        if not pedidos_rows:
+            return pd.DataFrame()
+
+        pedidos_df = pd.DataFrame(pedidos_rows).rename(
+            columns={
+                "id": "pedido_id",
+                "total": "valor_total",
+                "frete_valor": "frete_valor",
+                "created_at": "data_criacao",
+            }
+        )
+        pedidos_df["pedido_id"] = pedidos_df["pedido_id"].astype(str)
+        pedidos_df["cliente_id"] = pedidos_df["cliente_id"].astype(str)
+        pedidos_df["data_criacao"] = pd.to_datetime(pedidos_df["data_criacao"], errors="coerce", utc=True)
+
+    if pedidos_df.empty:
         return pd.DataFrame()
-
-    pedidos_df = pd.DataFrame(pedidos_rows).rename(
-        columns={
-            "id": "pedido_id",
-            "total": "valor_total",
-            "frete_valor": "frete_valor",
-            "created_at": "data_criacao",
-        }
-    )
-    pedidos_df["pedido_id"] = pedidos_df["pedido_id"].astype(str)
-    pedidos_df["cliente_id"] = pedidos_df["cliente_id"].astype(str)
-    pedidos_df["data_criacao"] = pd.to_datetime(pedidos_df["data_criacao"], errors="coerce", utc=True)
 
     pedido_ids = pedidos_df["pedido_id"].dropna().astype(str).unique().tolist()
     if not pedido_ids:
@@ -597,23 +609,44 @@ def fetch_financeiro(
     if not client:
         return pd.DataFrame()
 
-    query = client.table("vw_dashboard_financeiro").select("*")
-
-    if start_date and end_date:
-        query = query.gte("competencia_mes", start_date).lte("competencia_mes", end_date)
-    if tipo and tipo != "Todos":
-        query = query.eq("tipo", tipo)
-    if status_codigo is not None:
-        query = query.eq("status_codigo", status_codigo)
-    if categoria and categoria != "Todas":
-        query = query.eq("categoria", categoria)
-
-    query = query.order("data_vencimento", desc=True)
-    start = page * page_size
-    end = start + page_size - 1
-    query = query.range(start, end)
-
     try:
+        if page_size <= 0:
+            offset = 0
+            rows: list[Dict[str, Any]] = []
+            while True:
+                query = client.table("vw_dashboard_financeiro").select("*")
+                if start_date and end_date:
+                    query = query.gte("competencia_mes", start_date).lte("competencia_mes", end_date)
+                if tipo and tipo != "Todos":
+                    query = query.eq("tipo", tipo)
+                if status_codigo is not None:
+                    query = query.eq("status_codigo", status_codigo)
+                if categoria and categoria != "Todas":
+                    query = query.eq("categoria", categoria)
+                query = query.order("data_vencimento", desc=True)
+                response = query.range(offset, offset + POSTGREST_PAGE_ROWS - 1).execute()
+                chunk = response.data or []
+                rows.extend(chunk)
+                if len(chunk) < POSTGREST_PAGE_ROWS:
+                    break
+                offset += POSTGREST_PAGE_ROWS
+            return pd.DataFrame(rows)
+
+        query = client.table("vw_dashboard_financeiro").select("*")
+
+        if start_date and end_date:
+            query = query.gte("competencia_mes", start_date).lte("competencia_mes", end_date)
+        if tipo and tipo != "Todos":
+            query = query.eq("tipo", tipo)
+        if status_codigo is not None:
+            query = query.eq("status_codigo", status_codigo)
+        if categoria and categoria != "Todas":
+            query = query.eq("categoria", categoria)
+
+        query = query.order("data_vencimento", desc=True)
+        start = page * page_size
+        end = start + page_size - 1
+        query = query.range(start, end)
         response = query.execute()
         return pd.DataFrame(response.data)
     except Exception as exc:
