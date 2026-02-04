@@ -8,8 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 import streamlit as st
 
-DEFAULT_CONNECT_TIMEOUT_S = 10
-DEFAULT_READ_TIMEOUT_S = 120  # Aumentado para suportar workflows demorados
+DEFAULT_CONNECT_TIMEOUT_S = 30  # Conexão inicial
+DEFAULT_READ_TIMEOUT_S = 600  # 10 minutos - sempre aguarda o agente
 DEFAULT_MAX_MESSAGE_CHARS = 8000
 
 
