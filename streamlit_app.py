@@ -101,44 +101,82 @@ def get_daily_revenue():
 # --- 4. VIEWS ---
 
 def render_instructions():
-    st.markdown("### 📚 Guia de Uso do Sistema NBL")
-    st.markdown("Potencialize sua gestão com o assistente inteligente.")
+    st.markdown("### 📘 Manual do Usuário NBL Admin")
+    st.markdown("""
+    Bem-vindo ao **NBL Admin**, seu sistema integrado de gestão para gráficas. 
+    Este manual descreve as funcionalidades da plataforma e como utilizá-las para maximizar sua produtividade.
+    """)
     st.divider()
-    
-    col1, col2 = st.columns([1.5, 1])
-    
-    with col1:
-        st.markdown("#### 🤖 Como o Assistente Ajuda?")
-        st.info("O assistente está conectado em tempo real a todas as áreas da gráfica (Produção, Comercial e Financeiro).")
-        
-        with st.expander("🔍 Rastreamento e Status", expanded=True):
-            st.write("Acompanhe cada etapa da produção sem precisar abrir planilhas.")
-            st.markdown('<div class="prompt-card">Onde está o pedido da Construtora Mendes?</div>', unsafe_allow_html=True)
-            st.markdown('<div class="prompt-card">Quais pedidos estão atrasados na produção?</div>', unsafe_allow_html=True)
-            
-        with st.expander("💰 Orçamentos Agéis"):
-            st.write("Consulte preços e gere estimativas em segundos.")
-            st.markdown('<div class="prompt-card">Qual o valor para 1000 cartões com verniz local?</div>', unsafe_allow_html=True)
-            st.markdown('<div class="prompt-card">Me dê o preço de 50 banners 60x90.</div>', unsafe_allow_html=True)
-            
-        with st.expander("📊 Inteligência de Negócio"):
-            st.write("Receba insights estratégicos sobre sua operação.")
-            st.markdown('<div class="prompt-card">Qual foi o faturamento total desta semana?</div>', unsafe_allow_html=True)
-            st.markdown('<div class="prompt-card">Quem são meus clientes que mais compram?</div>', unsafe_allow_html=True)
 
-    with col2:
-        st.markdown("#### 🏭 Fluxo de Produção")
+    # Seção 1: Visão Geral
+    st.markdown("#### 1. Visão Geral")
+    st.info("""
+    O **NBL Admin** não é apenas um dashboard, é um **Sistema Especialista**. 
+    Ele unifica o controle de produção (PCP), a gestão financeira e o atendimento ao cliente em uma interface simples, 
+    potencializada por uma **Inteligência Artificial** que entende o contexto da sua gráfica.
+    """)
+
+    # Seção 2: Módulos do Sistema
+    st.markdown("#### 2. Módulos do Sistema")
+    
+    with st.expander("💬 Assistente IA (Chat)", expanded=True):
         st.markdown("""
-        Entenda o status dos seus pedidos:
+        O coração do sistema. Diferente de um chat comum, este assistente está **conectado ao seu banco de dados**.
         
-        | Fase | O que significa |
-        | :--- | :--- |
-        | **🎨 Aguardando Arte** | O cliente ainda não enviou ou aprovou o arquivo. |
-        | **🖥️ Pré-Impressão** | Arquivo em verificação técnica e gravação de chapa. |
-        | **🖨️ Impressão** | O trabalho está fisicamente rodando na máquina. |
-        | **✂️ Acabamento** | Processos finais: corte, dobra, encadernação. |
-        | **📦 Expedição** | Pronto, aguardando retirada ou entrega. |
+        **O que ele faz:**
+        - **Consulta Dados:** "Qual o status do pedido #2450?"
+        - **Analisa Financeiro:** "Quanto faturei ontem?"
+        - **Tira Dúvidas:** "Qual o prazo de entrega para banners?"
+        
+        **Limitações:**
+        - Ele não pode *criar* novos pedidos (ainda). Apenas consulta e análise.
         """)
+        
+    with st.expander("🏭 PCP (Planejamento e Controle de Produção)"):
+        st.markdown("""
+        O módulo de status permite rastrear cada ordem de serviço no chão de fábrica.
+        
+        **Status Disponíveis:**
+        - `Aguardando Arte`: Pedido entrou mas arquivo está pendente.
+        - `Pré-Impressão`: Arquivo sendo analisado ou chapa sendo gravada.
+        - `Em Produção`: Pedido em máquina (Offset/Digital/Plotter).
+        - `Acabamento`: Fase final (corte, refile, dobra).
+        - `Expedição`: Pronto para logística.
+        """)
+
+    with st.expander("💰 Controladoria Financeira"):
+        st.markdown("""
+        Visão gerencial para tomadores de decisão.
+        
+        - **KPIs:** Faturamento Bruto, Custos Variáveis, Margem de Contribuição.
+        - **Fluxo de Caixa:** Gráfico diário de entradas para identificar tendências.
+        - **Mix de Produtos:** Entenda quais categorias (Ex: Grandes Formatos vs Promocional) trazem mais receita.
+        """)
+
+    st.divider()
+
+    # Seção 3: Guia de Uso (Dicas Práticas)
+    st.markdown("#### 3. Como Usar Corretamente (Melhores Práticas)")
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**✅ Seja Específico no Chat**")
+        st.caption("A IA responde melhor a perguntas diretas.")
+        st.code("Errado: Como estão as coisas?\nCerto: Quais pedidos estão atrasados hoje?")
+        
+        st.markdown("**✅ Use Filtros nos Dashboards**")
+        st.caption("As tabelas possuem filtros de texto e categoria.")
+        st.write("Para achar um cliente rápido, digite apenas uma parte do nome (ex: 'Padaria') na busca.")
+
+    with c2:
+        st.markdown("**✅ Verifique os Prazos**")
+        st.caption("O sistema destaca prazos críticos.")
+        st.write("Na tabela de produção, datas passadas ficam em destaque. Use isso para priorizar a fila de impressão.")
+
+    st.markdown("#### 4. Suporte Técnico")
+    st.markdown("Em caso de inconsistência de dados ou falha no sistema, entre em contato:")
+    st.markdown("- **Email:** suporte@golfine.tech")
+    st.markdown("- **Horário:** Seg-Sex, 08h às 18h")
 
 def render_finance_view():
     st.markdown("### 💰 Controladoria Financeira")
