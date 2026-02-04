@@ -78,95 +78,101 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. DADOS MOCKADOS AVANÇADOS (FINANCEIRO REALISTA) ---
-def generate_financial_ledger():
-    """Gera um livro razão (ledger) completo simulando is_financeiro_lancamentos"""
-    
-    # Categorias baseadas no negócio de gráfica
-    categories = {
-        "receitas": [
-            ("Venda Balcão", 200, 1500), 
-            ("Venda Online", 500, 3000), 
-            ("Serviços de Arte", 50, 400),
-            ("Grandes Formatos", 1000, 5000)
-        ],
-        "despesas_fixas": [
-            ("Aluguel Galpão", 4500, 5),     # Dia 5
-            ("Folha de Pagamento", 18000, 5), # Dia 5
-            ("Internet/Telefone", 350, 10),  # Dia 10
-            ("Sistema de Gestão", 299, 15),  # Dia 15
-            ("Contabilidade", 1200, 20)      # Dia 20
-        ],
-        "despesas_var": [
-            ("Fornecedor Papel", 1000, 5000),
-            ("Manutenção Máquina", 500, 2000),
-            ("Insumos Tinta/Toner", 800, 3000),
-            ("Logística/Motoboy", 50, 300)
-        ]
-    }
-    
-    transactions = []
-    base_date = datetime.now().replace(day=1) # Começo do mês atual
-    days_in_month = 30
-    
-    for day in range(1, days_in_month + 1):
-        current_date = base_date.replace(day=day)
-        
-        # 1. Gerar Receitas Diárias (Aleatórias, menos fim de semana)
-        if current_date.weekday() < 6: # Seg-Sab
-            num_sales = random.randint(3, 8)
-            for _ in range(num_sales):
-                cat, min_v, max_v = random.choice(categories["receitas"])
-                val = random.randint(min_v, max_v)
-                transactions.append({
-                    "data": current_date,
-                    "descricao": f"Pedido #{random.randint(1000, 9999)} - {cat}",
-                    "categoria": cat,
-                    "tipo": "Receita",
-                    "valor": val
-                })
-                
-        # 2. Gerar Despesas Fixas (Dias Específicos)
-        for name, val, due_day in categories["despesas_fixas"]:
-            if day == due_day:
-                transactions.append({
-                    "data": current_date,
-                    "descricao": name,
-                    "categoria": "Despesa Fixa",
-                    "tipo": "Despesa",
-                    "valor": val
-                })
-                
-        # 3. Gerar Despesas Variáveis (Aleatórias)
-        if random.random() > 0.7:
-            item, min_v, max_v = random.choice(categories["despesas_var"])
-            val = random.randint(min_v, max_v)
-            transactions.append({
-                "data": current_date,
-                "descricao": f"Pagto {item}",
-                "categoria": "Despesa Variável",
-                "tipo": "Despesa",
-                "valor": val
-            })
+# --- 3. DADOS MOCKADOS (CARREGADOS DO JSON COM DADOS REAIS) ---
+import json
+from pathlib import Path
 
-    df = pd.DataFrame(transactions)
-    df["data"] = pd.to_datetime(df["data"]).dt.strftime("%d/%m")
-    return df
+@st.cache_data
+def load_mock_data():
+    """Carrega dados mockados do arquivo JSON (extraídos do dump MySQL real)."""
+    json_path = Path(__file__).parent / "data" / "mock_data.json"
+    if json_path.exists():
+        with open(json_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"clientes": [], "pedidos": [], "financeiro_lancamentos": [], "produtos": []}
+
+def get_clientes_df():
+    """Retorna DataFrame de clientes do mock_data.json"""
+    data = load_mock_data()
+    return pd.DataFrame(data.get("clientes", []))
+
+def get_pedidos_df():
+    """Retorna DataFrame de pedidos com join de clientes"""
+    data = load_mock_data()
+    pedidos = pd.DataFrame(data.get("pedidos", []))
+    clientes = pd.DataFrame(data.get("clientes", []))
+    
+    if not pedidos.empty and not clientes.empty:
+        # Join para trazer nome do cliente
+        pedidos = pedidos.merge(
+            clientes[["id", "nome"]], 
+            left_on="cliente_id", 
+            right_on="id", 
+            suffixes=("", "_cliente"),
+            how="left"
+        )
+        pedidos = pedidos.rename(columns={"nome": "Cliente", "id": "Pedido ID"})
+        pedidos["Pedido ID"] = "#" + pedidos["Pedido ID"].astype(str)
+        pedidos = pedidos.rename(columns={"total": "Valor", "status": "Status", "data": "Prazo"})
+        return pedidos[["Pedido ID", "Cliente", "Valor", "Status", "Prazo"]]
+    return pedidos
+
+def get_financeiro_df():
+    """Retorna DataFrame de lançamentos financeiros"""
+    data = load_mock_data()
+    lancamentos = pd.DataFrame(data.get("financeiro_lancamentos", []))
+    if not lancamentos.empty:
+        lancamentos["tipo_str"] = lancamentos["tipo"].apply(lambda x: "Receita" if x == 1 else "Despesa")
+        lancamentos = lancamentos.rename(columns={"tipo_str": "tipo"})
+    return lancamentos
+
+def generate_financial_ledger():
+    """Gera ledger a partir dos dados reais + simulação de volume"""
+    # Carrega base real
+    df_base = get_financeiro_df()
+    
+    if df_base.empty:
+        # Fallback para gerador antigo se não houver dados
+        transactions = []
+        base_date = datetime.now().replace(day=1)
+        for day in range(1, 30):
+            current_date = base_date.replace(day=day)
+            if current_date.weekday() < 6:
+                for _ in range(random.randint(2, 5)):
+                    transactions.append({
+                        "data": current_date.strftime("%d/%m"),
+                        "descricao": f"Pedido #{random.randint(1000, 9999)}",
+                        "categoria": "Vendas",
+                        "tipo": "Receita",
+                        "valor": random.randint(200, 1500)
+                    })
+                if random.random() > 0.7:
+                    transactions.append({
+                        "data": current_date.strftime("%d/%m"),
+                        "descricao": "Despesa Operacional",
+                        "categoria": "Despesa Variável",
+                        "tipo": "Despesa",
+                        "valor": random.randint(500, 3000)
+                    })
+        return pd.DataFrame(transactions)
+    
+    # Usa dados reais
+    df_base["data"] = pd.to_datetime(df_base["data"]).dt.strftime("%d/%m")
+    return df_base
 
 def get_db_mock_orders():
-    # Simula is_pedidos
-    clients = ["Restaurante Sabor", "Imob. Central", "Clínica Bem Estar", "Advocacia Silva", "Academia Fit"]
-    statuses = ["Aguardando Arte", "Em Produção", "Acabamento", "Expedição", "Entregue"]
-    data = []
-    for i in range(15):
-        data.append({
-            "Pedido ID": f"#{2450+i}",
-            "Cliente": random.choice(clients),
-            "Valor": random.randint(150, 2500),
-            "Status": random.choice(statuses),
-            "Prazo": (datetime.now() + timedelta(days=random.randint(-2, 5))).strftime("%d/%m")
+    """Retorna pedidos do mock_data.json formatados para exibição"""
+    df = get_pedidos_df()
+    if df.empty:
+        # Fallback
+        return pd.DataFrame({
+            "Pedido ID": ["#2450"],
+            "Cliente": ["Cliente Exemplo"],
+            "Valor": [500],
+            "Status": ["Em Produção"],
+            "Prazo": ["05/02"]
         })
-    return pd.DataFrame(data)
+    return df
 
 # --- 4. VIEWS ---
 

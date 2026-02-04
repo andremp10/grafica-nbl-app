@@ -1,0 +1,88 @@
+{
+  "clientes": [
+    {
+      "id": "1",
+      "tipo": "-297.43",
+      "nome": "fisica"
+    },
+    {
+      "id": "2",
+      "tipo": "-537.58",
+      "nome": "fisica"
+    },
+    {
+      "id": "3",
+      "tipo": "-156.62",
+      "nome": "fisica"
+    },
+    {
+      "id": "4",
+      "tipo": "-3619.82",
+      "nome": "fisica"
+    },
+    {
+      "id": "5",
+      "tipo": "0",
+      "nome": "fisica"
+    },
+    {
+      "id": "6",
+      "tipo": "332.49",
+      "nome": "fisica"
+    },
+    {
+      "id": "8",
+      "tipo": "-34.98",
+      "nome": "fisica"
+    },
+    {
+      "id": "10",
+      "tipo": "-867.51",
+      "nome": "MARIA DO SOCORRO CHAVES MOREIRA 02022506367"
+    },
+    {
+      "id": "12",
+      "tipo": "0",
+      "nome": "fisica"
+    },
+    {
+      "id": "13",
+      "tipo": "0",
+      "nome": "fisica"
+    },
+    {
+      "id": "14",
+      "tipo": "0",
+      "nome": "fisica"
+    },
+    {
+      "id": "15",
+      "tipo": "0",
+      "nome": "fisica"
+    },
+    {
+      "id": "16",
+      "tipo": "0",
+      "nome": "ALINNE CRISTINE VIEIRA RIOS 97299685353"
+    },
+    {
+      "id": "17",
+      "tipo": "0",
+      "nome": "fisica"
+    },
+    {
+      "id": "18",
+      "tipo": "0",
+      "nome": "ERICSON SILVA DE SOUSA 06729904313"
+    },
+    {
+      "id": "19",
+      "tipo": "0",
+      "nome": "fisica"
+    }
+  ],
+  "pedidos": [],
+  "financeiro": [],
+  "pedidos_count": 50,
+  "financeiro_count": 50
+}
