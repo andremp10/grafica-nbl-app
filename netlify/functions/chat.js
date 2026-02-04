@@ -58,7 +58,9 @@ export async function handler(event) {
       };
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    // FALLBACK DE SEGURANÇA: Se não encontrar no servidor, usa a chave direta (Temporário para funcionar AGORA)
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "AIzaSyB-4H-QFMo78Mi_DSzeE7S5soa6-zDbLTY";
+
     if (!apiKey) {
       return {
         statusCode: 500,
