@@ -592,76 +592,91 @@ def render_finance_view():
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # --- CHART: DESPESAS POR CATEGORIA (Plotly Static) ---
+    # --- CHART: DESPESAS POR CATEGORIA (Donut Chart) ---
     if val_despesas > 0 and not df_fin.empty:
-        st.markdown("##### 📉 Detalhamento de Despesas")
+        st.markdown("##### 📉 Composição de Despesas")
         
         df_saidas = df_fin[df_fin["tipo"] == "Saída"].copy()
-        # Agrupar por Categoria
-        df_chart = df_saidas.groupby("categoria")["valor"].sum().reset_index()
-        df_chart = df_chart.sort_values(by="valor", ascending=True) # Ascending for horizontal bar
         
-        fig = px.bar(
+        # Agrupar e Calcular Percentuais
+        df_chart = df_saidas.groupby("categoria")["valor"].sum().reset_index()
+        total_chart = df_chart["valor"].sum()
+        
+        # Sort desc
+        df_chart = df_chart.sort_values(by="valor", ascending=False)
+        
+        # Top 5 + Outros (Donut fica feio com muitos slices)
+        if len(df_chart) > 5:
+            top_n = df_chart.head(5)
+            outros_val = df_chart.iloc[5:]["valor"].sum()
+            outros_row = pd.DataFrame([{"categoria": "OUTROS", "valor": outros_val}])
+            df_chart = pd.concat([top_n, outros_row], ignore_index=True)
+        
+        fig = px.pie(
             df_chart, 
-            x="valor", 
-            y="categoria",
-            orientation='h',
-            text_auto='.2s',
-            title="",
-            color_discrete_sequence=['#e74c3c'] * len(df_chart) # Static Red
+            values="valor", 
+            names="categoria",
+            hole=0.4, # Donut
+            color_discrete_sequence=px.colors.qualitative.Prism, # Paleta elegante
+        )
+        
+        fig.update_traces(
+            textposition='inside', 
+            textinfo='percent+label',
+            hovertemplate = "<b>%{label}</b><br>R$ %{value:,.2f}<br>(%{percent})"
         )
         
         fig.update_layout(
-            xaxis_title="Valor (R$)",
-            yaxis_title=None,
-            height=300,
-            margin=dict(l=0, r=0, t=10, b=0),
-            showlegend=False,
-            # Disable interaction
+            height=350,
+            margin=dict(l=0, r=0, t=10, b=10),
+            showlegend=True, # Legend is good for Pie
+            legend=dict(orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.0), # Legend on right
             dragmode=False,
-            hovermode=False 
         )
         
-        # Format axes
-        fig.update_xaxes(showgrid=True, gridcolor='#333')
-        
-        st.plotly_chart(fig, use_container_width=True, config={'staticPlot': True})
+        st.plotly_chart(fig, use_container_width=True, config={'staticPlot': False}) # Allow hover for Pie
 
     st.divider()
 
-    # --- BLOCO 2: VENDAS (Clientes) ---
+    # --- BLOCO 2: VENDAS (Clientes - Vertical Bar) ---
     st.markdown("#### 🏆 Top Clientes")
 
     if not df_pedidos.empty:
         # Clean client names
         if "cliente_nome" in df_pedidos.columns:
              df_pedidos["cliente_nome"] = df_pedidos["cliente_nome"].astype(str).str.replace(r'[%@_\$]', ' ', regex=True).str.title()
+        
+        # Truncate names for X axis
+        df_pedidos["short_name"] = df_pedidos["cliente_nome"].apply(lambda x: x[:15] + "..." if len(x) > 15 else x)
 
-        top_clientes = df_pedidos.groupby("cliente_nome")["valor_total"].sum().reset_index()
+        top_clientes = df_pedidos.groupby(["cliente_nome", "short_name"])["valor_total"].sum().reset_index()
         top_clientes = top_clientes.sort_values(by="valor_total", ascending=False).head(10)
         
-        # Sort for chart (Ascending for horizontal bottom-up)
-        top_clientes_chart = top_clientes.sort_values(by="valor_total", ascending=True)
-
         fig_cli = px.bar(
-            top_clientes_chart,
-            x="valor_total",
-            y="cliente_nome",
-            orientation='h',
+            top_clientes,
+            x="short_name", # Short name on Axis
+            y="valor_total",
             text_auto='.2s',
-            color_discrete_sequence=['#9b59b6'] * len(top_clientes) if 'top_clientes' in locals() else ['#9b59b6'], # Purple
+            title="",
+        )
+        
+        fig_cli.update_traces(
+            marker_color='#8e44ad', # Deep Purple
+            textposition='outside',
+            hovertemplate = "<b>%{customdata}</b><br>R$ %{y:,.2f}",
+            customdata = top_clientes[["cliente_nome"]] # Full name on hover
         )
         
         fig_cli.update_layout(
-            xaxis_title="Total Comprado (R$)",
-            yaxis_title=None,
+            xaxis_title=None,
+            yaxis_title="Total Comprado (R$)",
             height=400,
             margin=dict(l=0, r=0, t=10, b=0),
             showlegend=False,
-            dragmode=False
+            dragmode=False,
         )
         
-        st.plotly_chart(fig_cli, use_container_width=True, config={'staticPlot': True})
+        st.plotly_chart(fig_cli, use_container_width=True, config={'staticPlot': False})
     
     else:
         st.info("Sem dados de vendas para o período.")
