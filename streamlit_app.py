@@ -693,26 +693,8 @@ def render_finance_view():
                 yaxis=dict(showgrid=True, gridcolor='#333', visible=True),
             )
             
-            st.plotly_chart(fig_bar, use_container_width=True)
             
-            # --- CSS/HTML HTML LEGEND/LIST FOR FULL CLARITY ---
-            # If user wants "CSS/HTML" likely for the list below to ensure readabilty
-            with st.expander("Ver Lista Detalhada (HTML)", expanded=False):
-                html_list = ""
-                for index, row in df_chart.head(10).iterrows():
-                    bar_width = min(100, int(row['percent'] * 2)) # Scale factor
-                    html_list += f"""
-                    <div style="margin-bottom: 8px; font-size: 0.9em;">
-                        <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
-                            <span style="font-weight:600;">{row['categoria']}</span>
-                            <span>R$ {row['valor']:,.2f}</span>
-                        </div>
-                        <div style="background: #333; width: 100%; height: 6px; border-radius: 3px;">
-                            <div style="background: #e74c3c; width: {row['percent']}%; height: 100%; border-radius: 3px;"></div>
-                        </div>
-                    </div>
-                    """
-                st.markdown(html_list, unsafe_allow_html=True)
+            st.plotly_chart(fig_bar, use_container_width=True)
 
     st.divider()
 
