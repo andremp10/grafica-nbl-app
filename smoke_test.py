@@ -1,13 +1,14 @@
 from dotenv import load_dotenv
-
-from data.repositories import fetch_financeiro, fetch_kpis_financeiro, fetch_pedidos
 from data.supabase_client import get_supabase_client
+from data.supabase_repo import (
+    fetch_view_data,
+    fetch_finance_kpis_rpc
+)
 
 load_dotenv(".env")
 
-
 def smoke_test() -> None:
-    print("Starting Smoke Test...")
+    print("Starting Generic Connector Smoke Test...")
 
     client = get_supabase_client()
     if client:
@@ -16,34 +17,40 @@ def smoke_test() -> None:
         print("Failed to initialize Supabase client")
         return
 
-    print("\n--- Testing Pedidos Fetch ---")
+    print("\n--- Testing Generic View Fetch (Pedidos) ---")
     try:
-        df_pedidos = fetch_pedidos(page_size=5)
+        df_pedidos = fetch_view_data(
+            view_name="vw_dashboard_pedidos",
+            limit=5,
+            order_by="data_criacao",
+            ascending=False
+        )
         print(f"Fetched {len(df_pedidos)} pedidos.")
         if not df_pedidos.empty:
             print("Columns:", df_pedidos.columns.tolist())
-            sample_cols = [c for c in ["pedido_id", "status_pedido", "data_prazo_validada"] if c in df_pedidos.columns]
-            print("Sample:\n", df_pedidos[sample_cols].head(2))
     except Exception as exc:
         print(f"Error fetching pedidos: {exc}")
 
-    print("\n--- Testing Financeiro Fetch ---")
+    print("\n--- Testing Generic View Fetch (Financeiro) ---")
     try:
-        df_financeiro = fetch_financeiro(page_size=5)
+        df_financeiro = fetch_view_data(
+            view_name="vw_dashboard_financeiro",
+            limit=5,
+            order_by="data_vencimento",
+            ascending=False
+        )
         print(f"Fetched {len(df_financeiro)} lancamentos financeiros.")
         if not df_financeiro.empty:
-            sample_cols = [c for c in ["lancamento_id", "descricao", "status_texto", "valor"] if c in df_financeiro.columns]
-            print("Sample:\n", df_financeiro[sample_cols].head(2))
+            print("Columns:", df_financeiro.columns.tolist())
     except Exception as exc:
         print(f"Error fetching financeiro: {exc}")
 
-    print("\n--- Testing Financeiro KPIs (RPC) ---")
+    print("\n--- Testing RPC (Financeiro KPIs) ---")
     try:
-        kpis = fetch_kpis_financeiro(start_date="2000-01-01", end_date="2030-12-31")
+        kpis = fetch_finance_kpis_rpc("2000-01-01", "2030-12-31")
         print("KPIs:", kpis)
     except Exception as exc:
         print(f"Error fetching KPIs: {exc}")
-
 
 if __name__ == "__main__":
     smoke_test()

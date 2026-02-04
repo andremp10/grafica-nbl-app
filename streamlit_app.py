@@ -9,9 +9,10 @@ from dotenv import load_dotenv
 
 from data.supabase_client import is_connected
 from data.supabase_repo import (
-    fetch_financeiro,
-    fetch_pedidos,
     fetch_snapshot_meta,
+    fetch_view_data,
+    fetch_kpis_generic,
+    fetch_finance_kpis_rpc
 )
 from services.n8n_service import send_message_to_n8n
 
@@ -353,21 +354,34 @@ def render_status_view():
     data_inicio, data_fim = _to_date_bounds(data_range)
 
     with st.spinner("Carregando pedidos do snapshot..."):
-        base_df = fetch_pedidos(
+        base_df = fetch_view_data(
+            view_name="vw_dashboard_pedidos",
             start_date=data_inicio,
             end_date=data_fim,
-            page_size=0,
+            date_column="data_criacao",
             snapshot_key=snapshot_key,
         )
     base_df = _normalize_pedidos_df(base_df)
 
-    if base_df.empty:
-        st.info("Nenhum pedido no período selecionado.")
-        return
 
-    total = int(len(base_df))
-    atrasados = int(base_df["is_atrasado"].sum()) if "is_atrasado" in base_df.columns else 0
-    finalizados = int(base_df["is_finalizado"].sum()) if "is_finalizado" in base_df.columns else 0
+    with st.spinner("Carregando KPIs..."):
+        # Generic KPI fetching
+        kpi_results = fetch_kpis_generic(
+            view_name="vw_dashboard_pedidos",
+            probes=[
+                {"label": "total", "filters": {}},
+                {"label": "atrasados", "filters": {"is_atrasado": True}},
+                {"label": "finalizados", "filters": {"is_finalizado": True}}
+            ],
+            date_column="data_criacao", # Or data_prazo_validada depending on business logic
+            start_date=data_inicio,
+            end_date=data_fim,
+            snapshot_key=snapshot_key
+        )
+
+    total = kpi_results.get("total", 0)
+    atrasados = kpi_results.get("atrasados", 0)
+    finalizados = kpi_results.get("finalizados", 0)
     em_andamento = max(total - finalizados, 0)
 
     c1, c2, c3, c4 = st.columns(4)
@@ -509,10 +523,18 @@ def render_finance_view():
     comp_inicio, comp_fim = _to_date_bounds(competencia)
 
     with st.spinner("Carregando lançamentos do snapshot..."):
-        base_df = fetch_financeiro(
+        # First fetch to get categories (optional, or separate small query)
+    # Ideally should be a separate lightweight query, but for now filtering on result is fine if dataset small, 
+    # or use distinct query. Let's just fetch default list for now or keep "Todas".
+    # For optimized category fetch we would need a specific distinct fetcher.
+    # Let's use the generic fetch just for determining dynamic categories if needed 
+    # OR better: just keep static list or distinct RPC in future.
+    # For now, let's just proceed to KPI fetch.    )
+        base_df = fetch_view_data(
+            view_name="vw_dashboard_financeiro",
             start_date=comp_inicio,
             end_date=comp_fim,
-            page_size=0,
+            date_column="competencia_mes",
             snapshot_key=snapshot_key,
         )
     base_df = _normalize_financeiro_df(base_df)
