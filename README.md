@@ -2,6 +2,9 @@
 
 Sistema de gestão inteligente para gráfica com dashboard, pedidos e chat IA.
 
+## 🚀 Live Demo
+**Acesse aqui:** [https://arthurpessoaa.github.io/Grafica_project/](https://arthurpessoaa.github.io/Grafica_project/)
+
 ## 🚀 Stack
 
 - **Frontend**: React + TypeScript + Vite
