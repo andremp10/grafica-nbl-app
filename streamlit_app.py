@@ -646,7 +646,7 @@ def render_finance_view():
                 legend=dict(orientation="h", yanchor="top", y=-0.2, xanchor="center", x=0.5), # Legend at bottom
                 dragmode=False,
             )
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, use_container_width=True, config={'displayModeBar': False})
 
         # --- VERTICAL BAR CHART (Values) ---
         with c_bar:
@@ -656,7 +656,7 @@ def render_finance_view():
             df_bar = df_chart.head(8).copy()
             
             # WRAP LABELS for legibility on vertical chart
-            df_bar["wrapped_label"] = df_bar["categoria"].apply(lambda x: _wrap_text(x, width=12))
+            df_bar["wrapped_label"] = df_bar["categoria"].apply(lambda x: _wrap_text(x, width=15))
             
             fig_bar = px.bar(
                 df_bar,
@@ -664,37 +664,33 @@ def render_finance_view():
                 y="valor",
                 text_auto='.2s',
                 title="",
-                color="categoria", # Use same colors as Pie based on category name
-                color_discrete_sequence=colors, # Fallback
+                color="categoria", # Sync colors
+                color_discrete_sequence=colors,
             )
-            
-            # Map specific colors if possible, but 'color=categoria' attempts to sync.
-            # Ideally, we map index to color manually, but let's trust Plotly's default cycle sharing logic context if we can.
-            # Actually, to guarantee sync:
-            # We would need a consistent color map. For now, using standard palette is close enough.
             
             fig_bar.update_traces(
                 textposition='outside',
-                hovertemplate = "<b>%{x}</b><br>R$ %{y:,.2f}",
-                showlegend=False # Legend already on Pie
+                hovertemplate = "<b>%{customdata}</b><br>R$ %{y:,.2f}",
+                customdata = df_bar[["categoria"]], # Show full name on hover
+                showlegend=False
             )
             
             fig_bar.update_layout(
                 xaxis_title=None,
                 yaxis_title=None,
-                height=350,
-                margin=dict(l=0, r=0, t=20, b=0),
+                height=450, # More vertical space
+                margin=dict(l=0, r=0, t=20, b=50), # Bottom margin for labels
                 showlegend=False,
                 dragmode=False,
                 xaxis=dict(
                     showgrid=False, 
-                    tickangle=-0, # Try horizontal first with wrapping
+                    tickangle=-45, # Slant labels
+                    automargin=True, # Prevent cutoff
                 ),
                 yaxis=dict(showgrid=True, gridcolor='#333', visible=True),
             )
             
-            
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
 
     st.divider()
 
@@ -706,10 +702,10 @@ def render_finance_view():
         if "cliente_nome" in df_pedidos.columns:
              df_pedidos["cliente_nome"] = df_pedidos["cliente_nome"].astype(str).str.replace(r'[%@_\$]', ' ', regex=True).str.title()
         
-        # Truncate names for X axis
-        df_pedidos["short_name"] = df_pedidos["cliente_nome"].apply(lambda x: x[:15] + "..." if len(x) > 15 else x)
+        # WRAP LABELS (No excessive truncation)
+        df_pedidos["wrapped_name"] = df_pedidos["cliente_nome"].apply(lambda x: _wrap_text(x, width=15))
 
-        top_clientes = df_pedidos.groupby(["cliente_nome", "short_name"])["valor_total"].sum().reset_index()
+        top_clientes = df_pedidos.groupby(["cliente_nome", "wrapped_name"])["valor_total"].sum().reset_index()
         top_clientes = top_clientes.sort_values(by="valor_total", ascending=False).head(10)
         
         # --- INSIGHT: CONCENTRAÇÃO DE RECEITA ---
@@ -721,7 +717,7 @@ def render_finance_view():
 
         fig_cli = px.bar(
             top_clientes,
-            x="short_name", # Short name on Axis
+            x="wrapped_name", # Short name on Axis
             y="valor_total",
             text_auto='.2s',
             title="",
@@ -737,13 +733,17 @@ def render_finance_view():
         fig_cli.update_layout(
             xaxis_title=None,
             yaxis_title="Total Comprado (R$)",
-            height=400,
-            margin=dict(l=0, r=0, t=10, b=0),
+            height=450, # Increased height
+            margin=dict(l=0, r=0, t=10, b=80), # Large bottom margin
             showlegend=False,
             dragmode=False,
+            xaxis=dict(
+                tickangle=-45,
+                automargin=True
+            )
         )
         
-        st.plotly_chart(fig_cli, use_container_width=True, config={'staticPlot': False})
+        st.plotly_chart(fig_cli, use_container_width=True, config={'displayModeBar': False})
     
     else:
         st.info("Sem dados de vendas para o período.")
