@@ -38,108 +38,158 @@ st.markdown("""
     /* Instruções */
     .guide-box {background: #1a1a1a; padding: 1.5rem; border-radius: 10px; margin-bottom: 1rem; border-left: 4px solid #2563eb;}
     .prompt-card {background: #151515; border: 1px dashed #444; padding: 10px 15px; border-radius: 6px; font-family: monospace; color: #a5b4fc; margin-bottom: 8px;}
+    
+    /* Status Badges */
+    .status-badge {padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;}
+    .status-ok {background: rgba(16, 185, 129, 0.2); color: #10b981;}
+    .status-warn {background: rgba(245, 158, 11, 0.2); color: #f59e0b;}
+    .status-err {background: rgba(239, 68, 68, 0.2); color: #ef4444;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. DADOS MOCKADOS AVANÇADOS ---
-def get_finance_data():
-    dates = [(datetime.now() - timedelta(days=i)).strftime("%d/%m") for i in range(30)][::-1]
-    revenue = [random.randint(2000, 5000) for _ in range(30)]
-    return pd.DataFrame({"Data": dates, "Faturamento": revenue}).set_index("Data")
+# --- 3. DADOS MOCKADOS (Baseado no Schema SQL) ---
+def get_db_mock_orders():
+    # Simula is_pedidos + is_clientes
+    clients_pj = ["Padaria Estrela do Sul", "Construtora Mendes", "Academia PowerFit", "Escola O Pequeno Príncipe", "Restaurante Sabor Caseiro"]
+    clients_pf = ["Ana Silva", "Carlos Oliveira", "Fernanda Santos", "Ricardo Souza"]
+    
+    products = ["Cartão de Visita 300g", "Panfleto A5 Couchê 115g", "Banner Lona 440g", "Adesivo Vinil Recorte", "Bloco de Notas Personalizado"]
+    
+    # Status baseados em is_extras_status ou fluxo real
+    statuses = ["Aguardando Arte", "Em Produção (CTP)", "Em Produção (Impressão)", "Acabamento/Corte", "Pronto para Retirada", "Entregue"]
+    
+    data = []
+    base_id = 2450
+    
+    for i in range(15):
+        is_pj = random.random() > 0.3
+        client = random.choice(clients_pj) if is_pj else random.choice(clients_pf)
+        tipo_cliente = "PJ" if is_pj else "PF"
+        
+        status = random.choice(statuses)
+        val = random.randint(100, 3500)
+        
+        data.append({
+            "Pedido ID": f"#{base_id + i}",
+            "Cliente": client,
+            "Tipo": tipo_cliente,
+            "Produto Principal": random.choice(products),
+            "Valor": val,
+            "Status": status,
+            "Prazo": (datetime.now() + timedelta(days=random.randint(-2, 5))).strftime("%d/%m")
+        })
+    
+    df = pd.DataFrame(data)
+    return df
 
-def get_product_mix():
-    return pd.DataFrame({
-        "Categoria": ["Editorial", "Comercial", "Promocional", "Brindes", "Grandes Formatos"],
-        "Valor": [15000, 28000, 12000, 5400, 8900]
-    })
+def get_finance_kpis():
+    # Simula dados agregados de is_financeiro_lancamentos e is_financeiro_caixas
+    return {
+        "faturamento_mes": "R$ 68.450,00",
+        "custos_fixos": "R$ 12.500,00",
+        "custos_var": "R$ 24.300,00",
+        "lucro_bruto": "R$ 31.650,00",
+        "ticket_medio": "R$ 485,00" # Média de is_pedidos.total
+    }
 
-def get_product_mix():
-    return pd.DataFrame({
-        "Categoria": ["Editorial", "Comercial", "Promocional", "Brindes", "Grandes Formatos"],
-        "Valor": [15000, 28000, 12000, 5400, 8900]
-    })
+def get_daily_revenue():
+    # Simula select sum(valor) from is_financeiro_lancamentos group by data
+    dates = [(datetime.now() - timedelta(days=i)).strftime("%d/%m") for i in range(15)][::-1]
+    values = [random.randint(2000, 8000) for _ in range(15)]
+    return pd.DataFrame({"Data": dates, "Receita (R$)": values}).set_index("Data")
 
 # --- 4. VIEWS ---
 
 def render_instructions():
-    st.markdown("### 📚 Guia de Uso do Sistema")
-    st.markdown("Aprenda a extrair o máximo do seu assistente IA e dos dashboards.")
+    st.markdown("### 📚 Guia de Uso do Sistema NBL")
+    st.markdown("Documentação baseada na estrutura de dados do sistema.")
     st.divider()
     
     col1, col2 = st.columns([1.5, 1])
     
     with col1:
-        st.markdown("#### 🤖 Capacidades do Agente")
-        with st.expander("🔍 Consultas de Status", expanded=True):
-            st.write("O agente conecta-se ao banco de dados em tempo real.")
-            st.markdown('<div class="prompt-card">Qual o status do pedido da Padaria Pão Quente?</div>', unsafe_allow_html=True)
-            st.markdown('<div class="prompt-card">O pedido #2405 já foi entregue?</div>', unsafe_allow_html=True)
+        st.markdown("#### 🤖 Comandos do Assistente")
+        st.info("O assistente consulta as tabelas `is_pedidos`, `is_clientes` e `is_produtos`.")
+        
+        with st.expander("🔍 Rastreamento de Pedidos", expanded=True):
+            st.markdown('<div class="prompt-card">Onde está o pedido da Construtora Mendes?</div>', unsafe_allow_html=True)
+            st.markdown('<div class="prompt-card">Quais pedidos estão na fase de "Acabamento"?</div>', unsafe_allow_html=True)
             
-        with st.expander("💰 Orçamentos e Preços"):
-            st.write("O agente conhece a tabela de preços atualizada.")
-            st.markdown('<div class="prompt-card">Quanto custa 1000 cartões couche 300g?</div>', unsafe_allow_html=True)
-            st.markdown('<div class="prompt-card">Me dê o preço de 50 banners 60x90.</div>', unsafe_allow_html=True)
+        with st.expander("💰 Tabela de Preços"):
+            st.markdown('<div class="prompt-card">Qual o valor do milheiro do cartão 300g com verniz local?</div>', unsafe_allow_html=True)
             
-        with st.expander("📊 Análise Gerencial"):
-            st.write("Peça resumos e insights.")
-            st.markdown('<div class="prompt-card">Qual foi o faturamento da semana passada?</div>', unsafe_allow_html=True)
-            st.markdown('<div class="prompt-card">Quais são os 3 maiores clientes deste mês?</div>', unsafe_allow_html=True)
+        with st.expander("📊 Relatórios Financeiros"):
+            st.markdown('<div class="prompt-card">Quanto a "Padaria Estrela" gastou esse mês?</div>', unsafe_allow_html=True)
 
     with col2:
-        st.markdown("#### 🏭 Fluxo da Gráfica")
+        st.markdown("#### 🏭 Legenda de Status")
         st.markdown("""
-        Entenda as etapas que aparecem nos dashboards:
-        
-        1. **⏳ Arte / Aprovação**: Arquivo recebido, aguardando validação do cliente ou pré-impressão.
-        2. **🖥️ CTP / Pré-press**: Gravação de chapas ou preparação de arquivo digital.
-        3. **🖨️ Impressão**: Produção rodando em máquina (Offset/Digital).
-        4. **✂️ Acabamento**: Corte, refile, verniz, dobra, encadernação.
-        5. **📦 Expedição**: Pronto para retirada ou rota de entrega.
+        | Status | Descrição |
+        | :--- | :--- |
+        | **Aguardando Arte** | Cliente não enviou ou arte reprovada. |
+        | **CTP / Pré-press** | Arquivo em gravação de chapa. |
+        | **Impressão** | Pedido rodando na máquina. |
+        | **Acabamento** | Corte, dobra ou laminação final. |
+        | **Expedição** | Aguardando motoboy ou retirada. |
         """)
-        st.info("💡 **Dica:** Se um pedido estiver 'na fila' por muito tempo, pergunte ao agente o motivo!")
 
 def render_finance_view():
-    st.markdown("### 💰 Análise Financeira")
-    st.caption("Visão gerencial de receitas, custos e margens.")
+    st.markdown("### 💰 Controladoria Financeira")
+    st.caption("Dados consolidados das tabelas `is_financeiro`.")
     st.divider()
     
-    # 1. KPIs Estratégicos
-    c1, c2, c3, c4 = st.columns(4)
-    def kpi(label, val, delta, d_color):
-        return f'<div class="metric-box"><div class="metric-lbl">{label}</div><div class="metric-val">{val}</div><div class="metric-delta {d_color}">{delta}</div></div>'
+    kpis = get_finance_kpis()
     
-    with c1: st.markdown(kpi("Faturamento (Mês)", "R$ 69.3k", "▲ 15%", "up"), unsafe_allow_html=True)
-    with c2: st.markdown(kpi("Custos Variáveis", "R$ 27.7k", "▼ 40%", "down"), unsafe_allow_html=True)
-    with c3: st.markdown(kpi("Margem Contrib.", "R$ 41.6k", "60%", "up"), unsafe_allow_html=True)
-    with c4: st.markdown(kpi("Ticket Médio", "R$ 480", "▲ R$ 20", "up"), unsafe_allow_html=True)
+    # 1. KPIs
+    c1, c2, c3, c4 = st.columns(4)
+    def kpi_card(label, val, delta=None, color="up"):
+        d = f'<div class="metric-delta {color}">{delta}</div>' if delta else ""
+        return f'<div class="metric-box"><div class="metric-lbl">{label}</div><div class="metric-val">{val}</div>{d}</div>'
+    
+    with c1: st.markdown(kpi_card("Faturamento (Mês)", kpis["faturamento_mes"], "▲ 12%", "up"), unsafe_allow_html=True)
+    with c2: st.markdown(kpi_card("Custos Variáveis", kpis["custos_var"], "▼ 5% (Economia)", "up"), unsafe_allow_html=True)
+    with c3: st.markdown(kpi_card("Ticket Médio", kpis["ticket_medio"], None), unsafe_allow_html=True)
+    with c4: st.markdown(kpi_card("Lucro Bruto Est.", kpis["lucro_bruto"], "46% Margem"), unsafe_allow_html=True)
     
     st.markdown("---")
     
     # 2. Gráficos
     col_chart1, col_chart2 = st.columns([2, 1])
-    
     with col_chart1:
-        st.markdown("#### 📈 Evolução Diária")
-        st.area_chart(get_finance_data(), color="#2563eb", height=300)
+        st.markdown("#### 📈 Entrada de Caixa Diária")
+        st.area_chart(get_daily_revenue(), color="#10b981", height=300)
     
     with col_chart2:
-        st.markdown("#### 🥯 Mix de Produtos")
-        df_mix = get_product_mix()
-        st.dataframe(
-            df_mix.style.format({"Valor": "R$ {:,.2f}"}).background_gradient(cmap="Blues"),
-            use_container_width=True,
-            hide_index=True
-        )
+        st.markdown("#### 🍰 Receita por Categoria")
+        st.dataframe(pd.DataFrame({
+            "Categoria": ["Grandes Formatos", "Offset Promocional", "Digital Pequeno Porte", "Brindes"],
+            "%" : ["40%", "35%", "15%", "10%"]
+        }), use_container_width=True, hide_index=True)
 
-    st.markdown("---")
-    st.markdown("#### ⭐ Top Clientes (Pareto 80/20)")
+def render_status_view():
+    st.markdown("### 🏭 Chão de Fábrica (PCP)")
+    st.caption("Visualização em tempo real da tabela `is_pedidos`.")
+    st.divider()
+    
+    df = get_db_mock_orders()
+    
+    # Filtros
+    c1, c2 = st.columns([3, 1])
+    with c1: search = st.text_input("Buscar Pedido / Cliente", placeholder="Digite o nome ou ID...")
+    with c2: filter_status = st.selectbox("Filtrar Status", ["Todos"] + list(df["Status"].unique()))
+    
+    if search:
+        df = df[df["Cliente"].str.contains(search, case=False) | df["Pedido ID"].str.contains(search)]
+    if filter_status != "Todos":
+        df = df[df["Status"] == filter_status]
+        
     st.dataframe(
-        pd.DataFrame([
-            {"Cliente": "Rede Supermercados Bom Preço", "Pedidos": 12, "Total": "R$ 15.400"},
-            {"Cliente": "Construtora Horizonte", "Pedidos": 5, "Total": "R$ 8.900"},
-            {"Cliente": "Colégio Saber", "Pedidos": 3, "Total": "R$ 5.200"},
-            {"Cliente": "Agência Criativa Marketing", "Pedidos": 20, "Total": "R$ 4.800"}
-        ]),
+        df,
+        column_config={
+            "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Status": st.column_config.TextColumn("Fase Atual"),
+            "Prazo": st.column_config.TextColumn("Entrega Prevista")
+        },
         use_container_width=True,
         hide_index=True
     )
@@ -155,7 +205,8 @@ def render_chat_view():
                 
     else:
         for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]): st.markdown(msg["content"])
+            align = "user" if msg["role"] == "user" else "assistant"
+            with st.chat_message(align): st.markdown(msg["content"])
 
     if prompt := st.chat_input("Digite sua mensagem..."):
         st.session_state.pending_prompt = prompt
@@ -167,29 +218,17 @@ def render_chat_view():
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"): st.markdown(prompt)
         
-        with st.status("🚀 Processando...", expanded=True) as status:
-            time.sleep(1); status.write("🔍 Analisando contexto...")
-            time.sleep(1); status.write("📊 Consultando dados...")
+        with st.status("🚀 Consultando Base de Dados...", expanded=True) as status:
+            time.sleep(1); status.write("🔍 Interpretando com IA...")
+            time.sleep(1); status.write("📡 Acessando `is_pedidos` e `is_clientes`...")
             history = st.session_state.messages[:-1]
             response = send_message_to_n8n(prompt, history)
-            status.update(label="✅ Concluído", state="complete", expanded=False)
+            status.update(label="✅ Resposta Gerada", state="complete", expanded=False)
             
         final_resp = response or "Erro ao processar."
         st.session_state.messages.append({"role": "assistant", "content": final_resp})
         with st.chat_message("assistant"): st.markdown(final_resp)
         st.rerun()
-
-def render_status_view():
-    st.markdown("### 🏭 Status de Produção")
-    st.caption("Acompanhamento de chão de fábrica em tempo real.")
-    st.divider()
-    c1,c2,c3,c4 = st.columns(4)
-    # Reutilizando mock data simples para brevidade, mas com UI melhor
-    st.dataframe(pd.DataFrame([
-        {"Pedido": "#2401", "Cliente": "Restaurante Sabor", "Fase": "Expedição", "Status": "✅ Pronto"},
-        {"Pedido": "#2402", "Cliente": "Imob. Central", "Fase": "Impressão", "Status": "🔄 Rodando"},
-        {"Pedido": "#2403", "Cliente": "Clínica Bem Estar", "Fase": "Pré-press", "Status": "⏳ Aguardando Chapa"},
-    ]), use_container_width=True)
 
 # --- 5. MAIN ---
 def main():
@@ -198,16 +237,16 @@ def main():
 
     with st.sidebar:
         st.title("🎨 NBL Admin")
-        st.caption("v4.3")
+        st.caption("v4.4 • Conectado")
         st.divider()
-        menu = {"💬 Chat": "Chat", "🏭 Status": "Status", "💰 Financeiro": "Financeiro", "ℹ️ Instruções": "Instruções"}
+        menu = {"💬 Chat": "Chat", "🏭 Status (PCP)": "Status", "💰 Financeiro": "Financeiro", "ℹ️ Instruções": "Instruções"}
         for k,v in menu.items():
             if st.button(k, use_container_width=True, type="primary" if st.session_state.current_view==v else "secondary"):
                 st.session_state.current_view = v
                 st.rerun()
         st.divider()
         st.caption("Desenvolvido por\n**Golfine Tecnologia**")
-        if st.button("Limpar"): st.session_state.messages = []; st.rerun()
+        if st.button("Limpar Chat"): st.session_state.messages = []; st.rerun()
 
     if st.session_state.current_view == "Chat": render_chat_view()
     elif st.session_state.current_view == "Status": render_status_view()
