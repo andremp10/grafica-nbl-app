@@ -19,7 +19,7 @@ export default defineConfig(({ mode }) => {
       }
     },
 
-    base: './1',
+    base: '/Grafica_project/',
 
   };
 });
