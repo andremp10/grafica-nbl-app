@@ -2,7 +2,7 @@ import streamlit as st
 import html
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 import random
 from dotenv import load_dotenv
 from services.n8n_service import get_webhook_url, probe_webhook, send_message_to_n8n
@@ -17,24 +17,23 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 1. CSS MINIMALISTA E MODERNO ---
+# --- 1. CSS PREMIUM ESTILO CHATGPT ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
-    /* Reset e Base */
+    /* Base */
     .stApp {
         background: #0f0f0f;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     }
     
-    /* Esconder elementos padrão */
     #MainMenu, footer, header {visibility: hidden;}
-    .block-container {padding: 1rem 2rem 6rem 2rem; max-width: 1200px;}
+    .block-container {padding: 1rem 2rem 8rem 2rem; max-width: 900px;}
     
     /* Sidebar */
     section[data-testid="stSidebar"] {
-        background: #161616;
+        background: #171717;
         border-right: 1px solid #262626;
     }
     section[data-testid="stSidebar"] .block-container {padding: 1.5rem 1rem;}
@@ -42,75 +41,70 @@ st.markdown("""
     /* Tipografia */
     h1, h2, h3 {
         font-family: 'Inter', sans-serif;
-        font-weight: 700;
+        font-weight: 600;
         color: #ffffff;
         letter-spacing: -0.02em;
     }
-    h1 {font-size: 2rem; margin-bottom: 0.5rem;}
-    h2 {font-size: 1.5rem; color: #e0e0e0;}
-    h3 {font-size: 1.1rem; color: #a0a0a0;}
-    p, div, label, span {color: #b0b0b0; font-family: 'Inter', sans-serif;}
+    h1 {font-size: 1.75rem;}
+    h2 {font-size: 1.25rem; color: #e0e0e0;}
+    p, div, label, span {color: #a0a0a0; font-family: 'Inter', sans-serif;}
     
-    /* Hero Simples */
-    .hero-section {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border: 1px solid #2a2a4a;
-        border-radius: 16px;
-        padding: 3rem 2rem;
+    /* Hero Clean */
+    .hero-clean {
         text-align: center;
-        margin-bottom: 2rem;
+        padding: 4rem 2rem 2rem;
     }
     .hero-title {
-        font-size: 2.5rem;
-        font-weight: 700;
-        background: linear-gradient(90deg, #667eea 0%, #764ba2 50%, #f093fb 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        margin: 0;
+        font-size: 2rem;
+        font-weight: 600;
+        color: #ffffff;
+        margin-bottom: 0.5rem;
     }
-    .hero-subtitle {color: #8888aa; font-size: 1rem; margin-top: 0.5rem;}
+    .hero-subtitle {
+        color: #666;
+        font-size: 1rem;
+    }
     
-    /* Cards de Métricas */
-    .metric-card {
+    /* Quick Actions Grid */
+    .quick-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0.75rem;
+        max-width: 600px;
+        margin: 2rem auto;
+    }
+    .quick-btn {
         background: #1a1a1a;
         border: 1px solid #2a2a2a;
         border-radius: 12px;
-        padding: 1.5rem;
+        padding: 1rem;
         text-align: center;
+        cursor: pointer;
         transition: all 0.2s ease;
+        color: #d0d0d0;
+        font-size: 0.9rem;
     }
-    .metric-card:hover {
-        border-color: #3a3a3a;
-        transform: translateY(-2px);
+    .quick-btn:hover {
+        background: #252525;
+        border-color: #404040;
     }
-    .metric-value {
-        font-size: 2rem;
-        font-weight: 700;
-        color: #ffffff;
-    }
-    .metric-label {
-        font-size: 0.75rem;
-        color: #666;
-        text-transform: uppercase;
-        letter-spacing: 1px;
-        margin-top: 0.25rem;
-    }
-    .metric-delta {font-size: 0.85rem; margin-top: 0.5rem;}
-    .delta-positive {color: #10b981;}
-    .delta-negative {color: #ef4444;}
     
-    /* Mensagens do Chat */
+    /* Chat Messages */
+    .msg-container {
+        max-width: 800px;
+        margin: 0 auto;
+        padding-bottom: 2rem;
+    }
     .chat-msg {
         padding: 1rem 1.25rem;
-        border-radius: 12px;
-        margin-bottom: 0.75rem;
-        max-width: 80%;
-        line-height: 1.5;
+        border-radius: 16px;
+        margin-bottom: 1rem;
+        line-height: 1.6;
         font-size: 0.95rem;
+        max-width: 85%;
     }
     .user-msg {
-        background: linear-gradient(135deg, #667eea, #764ba2);
+        background: #2563eb;
         color: white;
         margin-left: auto;
         border-bottom-right-radius: 4px;
@@ -122,70 +116,151 @@ st.markdown("""
         margin-right: auto;
         border-bottom-left-radius: 4px;
     }
-    
-    /* Quick Actions */
-    .stButton > button {
-        background: #1a1a1a;
-        border: 1px solid #333;
-        color: #e0e0e0;
-        border-radius: 8px;
-        padding: 0.75rem 1rem;
-        font-weight: 500;
-        transition: all 0.2s ease;
-    }
-    .stButton > button:hover {
-        background: #252525;
-        border-color: #667eea;
-        color: white;
+    .ai-msg .ai-icon {
+        display: inline-block;
+        width: 24px;
+        height: 24px;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        border-radius: 6px;
+        margin-right: 8px;
+        vertical-align: middle;
+        text-align: center;
+        line-height: 24px;
+        font-size: 12px;
     }
     
-    /* Input do Chat */
+    /* Loading Animation */
+    .loading-container {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 1rem;
+        background: #1e1e1e;
+        border: 1px solid #2a2a2a;
+        border-radius: 16px;
+        max-width: 400px;
+        margin-bottom: 1rem;
+    }
+    .loading-dots {
+        display: flex;
+        gap: 4px;
+    }
+    .loading-dots span {
+        width: 8px;
+        height: 8px;
+        background: #667eea;
+        border-radius: 50%;
+        animation: pulse 1.4s infinite ease-in-out;
+    }
+    .loading-dots span:nth-child(1) {animation-delay: 0s;}
+    .loading-dots span:nth-child(2) {animation-delay: 0.2s;}
+    .loading-dots span:nth-child(3) {animation-delay: 0.4s;}
+    @keyframes pulse {
+        0%, 80%, 100% {transform: scale(0.6); opacity: 0.5;}
+        40% {transform: scale(1); opacity: 1;}
+    }
+    .loading-text {
+        color: #888;
+        font-size: 0.9rem;
+    }
+    
+    /* Input Premium - Estilo ChatGPT */
     .stChatInput {
         position: fixed;
         bottom: 0;
         left: 0;
         right: 0;
-        background: rgba(15, 15, 15, 0.95);
-        backdrop-filter: blur(10px);
-        border-top: 1px solid #262626;
-        padding: 1rem;
+        background: linear-gradient(to top, #0f0f0f 80%, transparent);
+        padding: 1.5rem;
+        padding-top: 3rem;
     }
-    .stChatInput > div {max-width: 800px; margin: 0 auto;}
-    .stChatInput input {
-        background: #1a1a1a !important;
-        border: 1px solid #333 !important;
-        border-radius: 12px !important;
+    .stChatInput > div {
+        max-width: 800px;
+        margin: 0 auto;
+        background: #1a1a1a;
+        border: 1px solid #333;
+        border-radius: 24px;
+        overflow: hidden;
+    }
+    .stChatInput input, .stChatInput textarea {
+        background: transparent !important;
+        border: none !important;
         color: white !important;
-        padding: 1rem !important;
+        padding: 1rem 1.5rem !important;
+        font-size: 1rem !important;
+        box-shadow: none !important;
     }
-    .stChatInput input:focus {
-        border-color: #667eea !important;
-        box-shadow: 0 0 0 2px rgba(102, 126, 234, 0.2) !important;
+    .stChatInput input:focus, .stChatInput textarea:focus {
+        box-shadow: none !important;
+        border: none !important;
+    }
+    .stChatInput button {
+        background: #2563eb !important;
+        border: none !important;
+        border-radius: 50% !important;
+        width: 36px !important;
+        height: 36px !important;
+        margin: 8px !important;
     }
     
-    /* Tabela */
-    .dataframe {background: #1a1a1a !important;}
+    /* Metric Cards */
+    .metric-card {
+        background: #1a1a1a;
+        border: 1px solid #262626;
+        border-radius: 12px;
+        padding: 1.25rem;
+        text-align: center;
+    }
+    .metric-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        color: #ffffff;
+    }
+    .metric-label {
+        font-size: 0.7rem;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        margin-top: 0.25rem;
+    }
+    .metric-delta {font-size: 0.8rem; margin-top: 0.25rem;}
+    .delta-positive {color: #10b981;}
+    .delta-negative {color: #ef4444;}
     
     /* Status Badge */
     .status-badge {
         display: inline-block;
-        padding: 0.25rem 0.75rem;
-        border-radius: 20px;
-        font-size: 0.75rem;
+        padding: 0.2rem 0.6rem;
+        border-radius: 12px;
+        font-size: 0.7rem;
         font-weight: 600;
     }
     .status-ok {background: rgba(16, 185, 129, 0.15); color: #10b981;}
     .status-warn {background: rgba(245, 158, 11, 0.15); color: #f59e0b;}
-    .status-error {background: rgba(239, 68, 68, 0.15); color: #ef4444;}
+    
+    /* Buttons */
+    .stButton > button {
+        background: #1a1a1a;
+        border: 1px solid #333;
+        color: #e0e0e0;
+        border-radius: 10px;
+        padding: 0.6rem 1rem;
+        font-weight: 500;
+        transition: all 0.15s ease;
+    }
+    .stButton > button:hover {
+        background: #252525;
+        border-color: #444;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. STATE MANAGEMENT (Otimizado) ---
+# --- 2. STATE MANAGEMENT ---
 def init_state():
     defaults = {
         "messages": [],
-        "is_processing": False,
         "current_page": "chat",
+        "pending_prompt": None,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -193,239 +268,222 @@ def init_state():
 
 init_state()
 
-# --- 3. HELPER FUNCTIONS ---
+# --- 3. HELPERS ---
 def escape_html(text: str) -> str:
     return html.escape(text or "").replace("\n", "<br>")
 
 def format_currency(value: float) -> str:
     return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# --- 4. MOCK DATA (Realista para Gráfica) ---
+# --- 4. FRASES DE LOADING ANIMADAS ---
+LOADING_PHRASES = [
+    "🔍 Analisando sua solicitação...",
+    "🧠 Processando com IA...",
+    "📊 Consultando dados do sistema...",
+    "⚙️ Preparando resposta...",
+    "✨ Quase pronto...",
+    "🔄 Finalizando análise...",
+]
+
+# --- 5. MOCK DATA ---
 MOCK_ORDERS = [
-    {"id": "#2401", "cliente": "Restaurante Sabor & Arte", "produto": "500 Cardápios A4", "status": "✅ Entregue", "valor": 890.00, "data": "03/02/2026"},
-    {"id": "#2402", "cliente": "Imobiliária Central", "produto": "1000 Folders Triplos", "status": "🔄 Produção", "valor": 1450.00, "data": "03/02/2026"},
-    {"id": "#2403", "cliente": "Clínica Bem Estar", "produto": "200 Cartões de Visita", "status": "⏳ Aguardando Arte", "valor": 180.00, "data": "02/02/2026"},
-    {"id": "#2404", "cliente": "Loja Fashion Style", "produto": "50 Banners 60x90", "status": "🔄 Produção", "valor": 2100.00, "data": "02/02/2026"},
-    {"id": "#2405", "cliente": "Escritório Contábil ABC", "produto": "2000 Envelopes Timbrados", "status": "✅ Entregue", "valor": 680.00, "data": "01/02/2026"},
-    {"id": "#2406", "cliente": "Padaria Pão Quente", "produto": "300 Adesivos Personalizados", "status": "📦 Pronto p/ Retirada", "valor": 420.00, "data": "01/02/2026"},
+    {"id": "#2401", "cliente": "Restaurante Sabor & Arte", "produto": "500 Cardápios A4", "status": "✅ Entregue", "valor": 890.00, "data": "03/02"},
+    {"id": "#2402", "cliente": "Imobiliária Central", "produto": "1000 Folders Triplos", "status": "🔄 Produção", "valor": 1450.00, "data": "03/02"},
+    {"id": "#2403", "cliente": "Clínica Bem Estar", "produto": "200 Cartões de Visita", "status": "⏳ Arte", "valor": 180.00, "data": "02/02"},
+    {"id": "#2404", "cliente": "Loja Fashion Style", "produto": "50 Banners 60x90", "status": "🔄 Produção", "valor": 2100.00, "data": "02/02"},
+    {"id": "#2405", "cliente": "Escritório ABC", "produto": "2000 Envelopes", "status": "✅ Entregue", "valor": 680.00, "data": "01/02"},
+    {"id": "#2406", "cliente": "Padaria Pão Quente", "produto": "300 Adesivos", "status": "📦 Retirada", "valor": 420.00, "data": "01/02"},
 ]
 
 MOCK_METRICS = {
-    "pedidos_hoje": 14,
-    "pedidos_delta": "+3",
-    "receita_dia": 4280.00,
-    "receita_delta": "+12%",
-    "fila_producao": 8,
-    "fila_delta": "-2",
-    "ticket_medio": 305.00,
-    "ticket_delta": "+5%",
+    "pedidos_hoje": 14, "pedidos_delta": "+3",
+    "receita_dia": 4280.00, "receita_delta": "+12%",
+    "fila_producao": 8, "fila_delta": "-2",
+    "ticket_medio": 305.00, "ticket_delta": "+5%",
 }
 
-# --- 5. SIDEBAR ---
+# --- 6. SIDEBAR ---
 with st.sidebar:
     st.markdown("## 🎨 NBL Admin")
-    st.caption("v3.0 • Streamlit Cloud")
+    st.caption("v3.1 • Streamlit Cloud")
     st.markdown("---")
     
-    # Menu
-    menu_items = {
-        "💬 Assistente IA": "chat",
-        "📊 Dashboard": "dashboard",
-        "📝 Pedidos": "pedidos",
-        "⚙️ Configurações": "config",
-    }
-    
-    for label, page in menu_items.items():
-        if st.button(label, use_container_width=True, type="secondary" if st.session_state.current_page != page else "primary"):
+    menu = {"💬 Assistente": "chat", "📊 Dashboard": "dashboard", "📝 Pedidos": "pedidos", "⚙️ Config": "config"}
+    for label, page in menu.items():
+        btn_type = "primary" if st.session_state.current_page == page else "secondary"
+        if st.button(label, use_container_width=True, type=btn_type):
             st.session_state.current_page = page
+            st.rerun()
     
     st.markdown("---")
-    
-    # Status
     st.markdown("##### Status")
-    webhook_url = get_webhook_url()
-    if webhook_url:
+    if get_webhook_url():
         st.markdown('<span class="status-badge status-ok">● Webhook OK</span>', unsafe_allow_html=True)
     else:
-        st.markdown('<span class="status-badge status-error">● Webhook OFF</span>', unsafe_allow_html=True)
-    
-    supabase_url = os.getenv("SUPABASE_URL")
-    if supabase_url:
-        st.markdown('<span class="status-badge status-ok">● Supabase OK</span>', unsafe_allow_html=True)
-    else:
-        st.markdown('<span class="status-badge status-warn">● Supabase N/C</span>', unsafe_allow_html=True)
+        st.markdown('<span class="status-badge status-warn">● Webhook N/C</span>', unsafe_allow_html=True)
     
     st.markdown("---")
     if st.button("🗑️ Limpar Chat", use_container_width=True):
         st.session_state.messages = []
+        st.rerun()
 
-# --- 6. PÁGINAS ---
-
-# === CHAT ===
-if st.session_state.current_page == "chat":
-    # Hero (só quando vazio)
-    if not st.session_state.messages:
-        st.markdown("""
-        <div class="hero-section">
-            <h1 class="hero-title">Assistente Gráfica NBL</h1>
-            <p class="hero-subtitle">Como posso ajudar você hoje?</p>
-        </div>
-        """, unsafe_allow_html=True)
+# --- 7. PROCESSAR PROMPT PENDENTE ---
+def process_pending():
+    if st.session_state.pending_prompt:
+        prompt = st.session_state.pending_prompt
+        st.session_state.pending_prompt = None
         
-        # Quick Actions
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            if st.button("📦 Status de Pedidos", use_container_width=True):
-                st.session_state.messages.append({"role": "user", "content": "Qual o status dos pedidos em aberto?"})
-        with col2:
-            if st.button("💰 Faturamento do Mês", use_container_width=True):
-                st.session_state.messages.append({"role": "user", "content": "Como está o faturamento do mês?"})
-        with col3:
-            if st.button("📊 Relatório Geral", use_container_width=True):
-                st.session_state.messages.append({"role": "user", "content": "Gere um relatório geral do sistema"})
-    
-    # Container de mensagens
-    chat_container = st.container()
-    with chat_container:
-        for msg in st.session_state.messages:
-            css_class = "user-msg" if msg["role"] == "user" else "ai-msg"
-            content_html = escape_html(msg.get("content", ""))
-            st.markdown(f'<div class="chat-msg {css_class}">{content_html}</div>', unsafe_allow_html=True)
-    
-    # Input
-    if prompt := st.chat_input("Digite sua mensagem..."):
         # Adiciona mensagem do usuário
         st.session_state.messages.append({"role": "user", "content": prompt})
         
-        # Processa resposta
-        with st.spinner("Processando..."):
-            history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[:-1]]
-            response = send_message_to_n8n(prompt, history)
+        # Placeholder para loading animado
+        loading_placeholder = st.empty()
         
-        # Adiciona resposta
+        # Simular loading com frases rotativas
+        start_time = time.time()
+        phrase_idx = 0
+        
+        # Usar thread para não bloquear? Não, vamos fazer polling simulado
+        # Na verdade, Streamlit não permite isso bem. Vamos mostrar uma frase e processar
+        loading_placeholder.markdown(f"""
+        <div class="loading-container">
+            <div class="loading-dots"><span></span><span></span><span></span></div>
+            <span class="loading-text">{random.choice(LOADING_PHRASES)}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Processar
+        history = [{"role": m["role"], "content": m["content"]} for m in st.session_state.messages[:-1]]
+        response = send_message_to_n8n(prompt, history)
+        
+        loading_placeholder.empty()
+        
         st.session_state.messages.append({
-            "role": "assistant", 
-            "content": response or "Desculpe, não consegui processar sua mensagem."
+            "role": "assistant",
+            "content": response or "Desculpe, não consegui processar sua solicitação."
         })
+        st.rerun()
+
+# --- 8. PÁGINAS ---
+
+# === CHAT ===
+if st.session_state.current_page == "chat":
+    # Processar prompt pendente primeiro
+    process_pending()
+    
+    # Hero (só quando vazio)
+    if not st.session_state.messages:
+        st.markdown("""
+        <div class="hero-clean">
+            <div class="hero-title">Como posso ajudar?</div>
+            <div class="hero-subtitle">Assistente inteligente da Gráfica NBL</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Quick Actions como botões reais
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("📦 Status de Pedidos", use_container_width=True, key="q1"):
+                st.session_state.pending_prompt = "Qual o status dos pedidos em aberto?"
+                st.rerun()
+        with col2:
+            if st.button("💰 Faturamento", use_container_width=True, key="q2"):
+                st.session_state.pending_prompt = "Como está o faturamento do mês?"
+                st.rerun()
+        with col3:
+            if st.button("📊 Relatório Geral", use_container_width=True, key="q3"):
+                st.session_state.pending_prompt = "Gere um relatório geral do sistema"
+                st.rerun()
+    
+    # Mensagens
+    st.markdown('<div class="msg-container">', unsafe_allow_html=True)
+    for msg in st.session_state.messages:
+        if msg["role"] == "user":
+            st.markdown(f'<div class="chat-msg user-msg">{escape_html(msg["content"])}</div>', unsafe_allow_html=True)
+        else:
+            st.markdown(f'''
+            <div class="chat-msg ai-msg">
+                <span class="ai-icon">🤖</span>
+                {escape_html(msg["content"])}
+            </div>
+            ''', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Input
+    if prompt := st.chat_input("Mensagem para o assistente..."):
+        st.session_state.pending_prompt = prompt
         st.rerun()
 
 # === DASHBOARD ===
 elif st.session_state.current_page == "dashboard":
     st.markdown("# 📊 Dashboard")
-    st.caption("Visão geral do dia • Dados de demonstração")
+    st.caption("Visão geral • Dados demonstrativos")
     
-    # Métricas
     col1, col2, col3, col4 = st.columns(4)
     
-    def render_metric(label, value, delta, is_currency=False):
-        val_str = format_currency(value) if is_currency else str(value)
-        delta_class = "delta-positive" if delta.startswith("+") else "delta-negative"
-        return f"""
-        <div class="metric-card">
-            <div class="metric-value">{val_str}</div>
-            <div class="metric-label">{label}</div>
-            <div class="metric-delta {delta_class}">{delta}</div>
-        </div>
-        """
+    def metric(label, value, delta, is_curr=False):
+        v = format_currency(value) if is_curr else str(value)
+        d_class = "delta-positive" if delta.startswith("+") else "delta-negative"
+        return f'<div class="metric-card"><div class="metric-value">{v}</div><div class="metric-label">{label}</div><div class="metric-delta {d_class}">{delta}</div></div>'
     
     with col1:
-        st.markdown(render_metric("Pedidos Hoje", MOCK_METRICS["pedidos_hoje"], MOCK_METRICS["pedidos_delta"]), unsafe_allow_html=True)
+        st.markdown(metric("Pedidos Hoje", MOCK_METRICS["pedidos_hoje"], MOCK_METRICS["pedidos_delta"]), unsafe_allow_html=True)
     with col2:
-        st.markdown(render_metric("Receita (Dia)", MOCK_METRICS["receita_dia"], MOCK_METRICS["receita_delta"], True), unsafe_allow_html=True)
+        st.markdown(metric("Receita", MOCK_METRICS["receita_dia"], MOCK_METRICS["receita_delta"], True), unsafe_allow_html=True)
     with col3:
-        st.markdown(render_metric("Fila Produção", MOCK_METRICS["fila_producao"], MOCK_METRICS["fila_delta"]), unsafe_allow_html=True)
+        st.markdown(metric("Em Produção", MOCK_METRICS["fila_producao"], MOCK_METRICS["fila_delta"]), unsafe_allow_html=True)
     with col4:
-        st.markdown(render_metric("Ticket Médio", MOCK_METRICS["ticket_medio"], MOCK_METRICS["ticket_delta"], True), unsafe_allow_html=True)
+        st.markdown(metric("Ticket Médio", MOCK_METRICS["ticket_medio"], MOCK_METRICS["ticket_delta"], True), unsafe_allow_html=True)
     
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Gráfico simples
     col1, col2 = st.columns([2, 1])
-    
     with col1:
         st.markdown("### 📈 Receita Semanal")
-        chart_data = {
-            "Seg": 3200, "Ter": 4100, "Qua": 3800, 
-            "Qui": 4500, "Sex": 5200, "Sáb": 2800
-        }
-        st.bar_chart(chart_data, color="#667eea")
-    
+        st.bar_chart({"Seg": 3200, "Ter": 4100, "Qua": 3800, "Qui": 4500, "Sex": 5200, "Sáb": 2800}, color="#2563eb")
     with col2:
-        st.markdown("### 🎯 Status Produção")
-        st.markdown("""
-        - **Em Produção:** 8 pedidos
-        - **Aguardando Arte:** 3 pedidos  
-        - **Prontos p/ Retirada:** 5 pedidos
-        - **Entregues Hoje:** 6 pedidos
-        """)
+        st.markdown("### 🎯 Produção")
+        st.markdown("- **Em Produção:** 8\n- **Aguardando:** 3\n- **Prontos:** 5\n- **Entregues:** 6")
 
 # === PEDIDOS ===
 elif st.session_state.current_page == "pedidos":
     st.markdown("# 📝 Pedidos")
-    st.caption("Gestão de pedidos • Dados de demonstração")
+    st.caption("Consulta de pedidos • Dados demonstrativos")
     
-    # Filtros
-    col1, col2, col3 = st.columns([2, 2, 1])
+    col1, col2 = st.columns([3, 1])
     with col1:
-        search = st.text_input("🔍 Buscar cliente ou pedido", placeholder="Digite para buscar...")
+        search = st.text_input("🔍 Buscar", placeholder="Cliente ou pedido...", label_visibility="collapsed")
     with col2:
-        status_filter = st.selectbox("Status", ["Todos", "✅ Entregue", "🔄 Produção", "⏳ Aguardando Arte", "📦 Pronto p/ Retirada"])
-    with col3:
-        st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("➕ Novo Pedido", use_container_width=True):
-            st.info("Funcionalidade em desenvolvimento")
+        status_filter = st.selectbox("Status", ["Todos", "✅ Entregue", "🔄 Produção", "⏳ Arte", "📦 Retirada"], label_visibility="collapsed")
     
-    # Tabela
     import pandas as pd
     df = pd.DataFrame(MOCK_ORDERS)
-    
-    # Aplicar filtros
     if search:
         df = df[df["cliente"].str.contains(search, case=False) | df["id"].str.contains(search, case=False)]
     if status_filter != "Todos":
         df = df[df["status"] == status_filter]
     
-    # Formatar valores
-    df["valor"] = df["valor"].apply(lambda x: format_currency(x))
+    df["valor"] = df["valor"].apply(format_currency)
     df.columns = ["ID", "Cliente", "Produto", "Status", "Valor", "Data"]
-    
     st.dataframe(df, use_container_width=True, hide_index=True)
     
-    # Resumo
     total = sum(o["valor"] for o in MOCK_ORDERS)
-    st.markdown(f"**Total em pedidos:** {format_currency(total)} • **{len(MOCK_ORDERS)} pedidos**")
+    st.caption(f"Total: {format_currency(total)} • {len(MOCK_ORDERS)} pedidos")
 
-# === CONFIGURAÇÕES ===
+# === CONFIG ===
 elif st.session_state.current_page == "config":
     st.markdown("# ⚙️ Configurações")
     
-    with st.expander("🔗 Integrações", expanded=True):
-        col1, col2 = st.columns([3, 1])
+    with st.expander("🔗 Webhook N8N", expanded=True):
+        webhook = get_webhook_url() or ""
+        masked = webhook[:25] + "..." if len(webhook) > 28 else webhook or "Não configurado"
+        col1, col2 = st.columns([4, 1])
         with col1:
-            webhook = get_webhook_url() or ""
-            masked = webhook[:20] + "..." + webhook[-10:] if len(webhook) > 35 else webhook
-            st.text_input("Webhook N8N", value=masked if webhook else "Não configurado", disabled=True)
+            st.text_input("URL", value=masked, disabled=True, label_visibility="collapsed")
         with col2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("Testar", use_container_width=True):
+            if st.button("Testar"):
                 ok, msg = probe_webhook()
-                if ok:
-                    st.success(f"✅ {msg}")
-                else:
-                    st.error(f"❌ {msg}")
-    
-    with st.expander("📊 Supabase"):
-        supabase_url = os.getenv("SUPABASE_URL") or ""
-        st.text_input("URL", value=supabase_url[:30] + "..." if len(supabase_url) > 30 else supabase_url or "Não configurado", disabled=True)
-        st.caption("Configure via Secrets no Streamlit Cloud")
+                st.success(f"✅ {msg}") if ok else st.error(f"❌ {msg}")
     
     with st.expander("ℹ️ Sobre"):
-        st.markdown("""
-        **Gráfica NBL Admin** v3.0
-        
-        Desenvolvido para gestão de pedidos e atendimento ao cliente.
-        
-        - Assistente IA via N8N
-        - Dashboard de métricas
-        - Gestão de pedidos
-        """)
+        st.markdown("**Gráfica NBL Admin** v3.1\n\nAssistente IA + Dashboard + Consulta de Pedidos")

@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 DEFAULT_CONNECT_TIMEOUT_S = 10
-DEFAULT_READ_TIMEOUT_S = 60
+DEFAULT_READ_TIMEOUT_S = 120  # Aumentado para suportar workflows demorados
 DEFAULT_MAX_MESSAGE_CHARS = 8000
 
 
