@@ -679,13 +679,13 @@ def render_finance_view():
             fig_bar.update_layout(
                 xaxis_title=None,
                 yaxis_title=None,
-                height=550, # Significantly taller
-                margin=dict(l=0, r=0, t=20, b=100), # Extra space for vertical text
+                height=500, # Balanced height
+                margin=dict(l=0, r=0, t=20, b=50), # Space for horizontal wrapped text
                 showlegend=False,
                 dragmode=False,
                 xaxis=dict(
                     showgrid=False, 
-                    tickangle=-90, # Vertical labels
+                    tickangle=0, # Horizontal labels
                     automargin=True, 
                 ),
                 yaxis=dict(showgrid=True, gridcolor='#333', visible=True),
@@ -721,6 +721,10 @@ def render_finance_view():
             x="wrapped_name", # Short name on Axis
             y="valor_total",
             text_auto='.2s',
+            title="",
+        )
+        
+        fig_cli.update_traces(
             marker_color='#8e44ad', # Deep Purple
             textposition='outside',
             texttemplate='<b>%{y:.2s}</b>', # Bold text, short format
@@ -731,12 +735,12 @@ def render_finance_view():
         fig_cli.update_layout(
             xaxis_title=None,
             yaxis_title="Total Comprado (R$)",
-            height=600, # Very tall for legibility
-            margin=dict(l=0, r=0, t=10, b=120), # Large bottom margin for vertical names
+            height=500, # Balanced height
+            margin=dict(l=0, r=0, t=10, b=50),
             showlegend=False,
             dragmode=False,
             xaxis=dict(
-                tickangle=-90, # Vertical labels
+                tickangle=0, # Horizontal labels (User Request)
                 automargin=True
             )
         )
