@@ -13,17 +13,52 @@ st.set_page_config(
     page_title="Gráfica NBL Admin",
     page_icon="🎨",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="auto" # Auto colapsa em mobile
 )
 
 # --- 2. CSS ---
 st.markdown("""
 <style>
-    .main .block-container {max-width: 1000px; padding-top: 2rem; padding-bottom: 5rem;}
+    .main .block-container {
+        max-width: 1000px;
+        padding-top: 2rem;
+        padding-bottom: 5rem;
+    }
     
-    /* Hero */
-    .hero-container {display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60vh; text-align: center;}
-    .hero-title {font-size: 2.5rem; font-weight: 700; color: #fff; margin-bottom: 2rem;}
+    /* Hero Section Responsiva */
+    .hero-container {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 50vh; /* Altura mínima flexível */
+        text-align: center;
+        padding: 1rem;
+    }
+    .hero-title {
+        font-size: 2.5rem;
+        font-weight: 700;
+        color: #fff;
+        margin-bottom: 1.5rem;
+    }
+    
+    /* Mobile CSS Adjustments */
+    @media (max-width: 768px) {
+        .main .block-container {
+            padding-top: 1rem;
+            padding-bottom: 6rem; /* Mais espaço para input mobile */
+        }
+        .hero-title {
+            font-size: 1.8rem; /* Título menor mobile */
+        }
+        .metric-box {
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        .stButton button {
+            width: 100%; /* Botões full width */
+        }
+    }
     
     /* Metrics */
     .metric-box {
@@ -38,7 +73,8 @@ st.markdown("""
     
     /* Instruções */
     .guide-box {background: #1a1a1a; padding: 1.5rem; border-radius: 10px; margin-bottom: 1rem; border-left: 4px solid #2563eb;}
-    .prompt-card {background: #151515; border: 1px dashed #444; padding: 10px 15px; border-radius: 6px; font-family: monospace; color: #a5b4fc; margin-bottom: 8px;}
+    .prompt-card {background: #151515; border: 1px dashed #444; padding: 10px 15px; border-radius: 6px; font-family: monospace; color: #a5b4fc; margin-bottom: 8px; font-size: 0.9rem;}
+    
 </style>
 """, unsafe_allow_html=True)
 
