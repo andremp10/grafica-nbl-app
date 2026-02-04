@@ -102,40 +102,47 @@ def get_daily_revenue():
 
 def render_instructions():
     st.markdown("### 📚 Guia de Uso do Sistema NBL")
-    st.markdown("Documentação baseada na estrutura de dados do sistema.")
+    st.markdown("Potencialize sua gestão com o assistente inteligente.")
     st.divider()
     
     col1, col2 = st.columns([1.5, 1])
     
     with col1:
-        st.markdown("#### 🤖 Comandos do Assistente")
-        st.info("O assistente consulta as tabelas `is_pedidos`, `is_clientes` e `is_produtos`.")
+        st.markdown("#### 🤖 Como o Assistente Ajuda?")
+        st.info("O assistente está conectado em tempo real a todas as áreas da gráfica (Produção, Comercial e Financeiro).")
         
-        with st.expander("🔍 Rastreamento de Pedidos", expanded=True):
+        with st.expander("🔍 Rastreamento e Status", expanded=True):
+            st.write("Acompanhe cada etapa da produção sem precisar abrir planilhas.")
             st.markdown('<div class="prompt-card">Onde está o pedido da Construtora Mendes?</div>', unsafe_allow_html=True)
-            st.markdown('<div class="prompt-card">Quais pedidos estão na fase de "Acabamento"?</div>', unsafe_allow_html=True)
+            st.markdown('<div class="prompt-card">Quais pedidos estão atrasados na produção?</div>', unsafe_allow_html=True)
             
-        with st.expander("💰 Tabela de Preços"):
-            st.markdown('<div class="prompt-card">Qual o valor do milheiro do cartão 300g com verniz local?</div>', unsafe_allow_html=True)
+        with st.expander("💰 Orçamentos Agéis"):
+            st.write("Consulte preços e gere estimativas em segundos.")
+            st.markdown('<div class="prompt-card">Qual o valor para 1000 cartões com verniz local?</div>', unsafe_allow_html=True)
+            st.markdown('<div class="prompt-card">Me dê o preço de 50 banners 60x90.</div>', unsafe_allow_html=True)
             
-        with st.expander("📊 Relatórios Financeiros"):
-            st.markdown('<div class="prompt-card">Quanto a "Padaria Estrela" gastou esse mês?</div>', unsafe_allow_html=True)
+        with st.expander("📊 Inteligência de Negócio"):
+            st.write("Receba insights estratégicos sobre sua operação.")
+            st.markdown('<div class="prompt-card">Qual foi o faturamento total desta semana?</div>', unsafe_allow_html=True)
+            st.markdown('<div class="prompt-card">Quem são meus clientes que mais compram?</div>', unsafe_allow_html=True)
 
     with col2:
-        st.markdown("#### 🏭 Legenda de Status")
+        st.markdown("#### 🏭 Fluxo de Produção")
         st.markdown("""
-        | Status | Descrição |
+        Entenda o status dos seus pedidos:
+        
+        | Fase | O que significa |
         | :--- | :--- |
-        | **Aguardando Arte** | Cliente não enviou ou arte reprovada. |
-        | **CTP / Pré-press** | Arquivo em gravação de chapa. |
-        | **Impressão** | Pedido rodando na máquina. |
-        | **Acabamento** | Corte, dobra ou laminação final. |
-        | **Expedição** | Aguardando motoboy ou retirada. |
+        | **🎨 Aguardando Arte** | O cliente ainda não enviou ou aprovou o arquivo. |
+        | **🖥️ Pré-Impressão** | Arquivo em verificação técnica e gravação de chapa. |
+        | **🖨️ Impressão** | O trabalho está fisicamente rodando na máquina. |
+        | **✂️ Acabamento** | Processos finais: corte, dobra, encadernação. |
+        | **📦 Expedição** | Pronto, aguardando retirada ou entrega. |
         """)
 
 def render_finance_view():
     st.markdown("### 💰 Controladoria Financeira")
-    st.caption("Dados consolidados das tabelas `is_financeiro`.")
+    st.caption("Visão consolidada do fluxo de caixa e resultados.")
     st.divider()
     
     kpis = get_finance_kpis()
@@ -156,7 +163,7 @@ def render_finance_view():
     # 2. Gráficos
     col_chart1, col_chart2 = st.columns([2, 1])
     with col_chart1:
-        st.markdown("#### 📈 Entrada de Caixa Diária")
+        st.markdown("#### 📈 Entrada de Caixa")
         st.area_chart(get_daily_revenue(), color="#10b981", height=300)
     
     with col_chart2:
@@ -168,15 +175,15 @@ def render_finance_view():
 
 def render_status_view():
     st.markdown("### 🏭 Chão de Fábrica (PCP)")
-    st.caption("Visualização em tempo real da tabela `is_pedidos`.")
+    st.caption("Acompanhamento da produção em tempo real.")
     st.divider()
     
     df = get_db_mock_orders()
     
     # Filtros
     c1, c2 = st.columns([3, 1])
-    with c1: search = st.text_input("Buscar Pedido / Cliente", placeholder="Digite o nome ou ID...")
-    with c2: filter_status = st.selectbox("Filtrar Status", ["Todos"] + list(df["Status"].unique()))
+    with c1: search = st.text_input("Buscar Pedido / Cliente", placeholder="Digite nome, empresa ou número do pedido...")
+    with c2: filter_status = st.selectbox("Filtrar por Fase", ["Todos"] + list(df["Status"].unique()))
     
     if search:
         df = df[df["Cliente"].str.contains(search, case=False) | df["Pedido ID"].str.contains(search)]
@@ -219,8 +226,8 @@ def render_chat_view():
         with st.chat_message("user"): st.markdown(prompt)
         
         with st.status("🚀 Consultando Base de Dados...", expanded=True) as status:
-            time.sleep(1); status.write("🔍 Interpretando com IA...")
-            time.sleep(1); status.write("📡 Acessando `is_pedidos` e `is_clientes`...")
+            time.sleep(1); status.write("🔍 Interpretando solicitação...")
+            time.sleep(1); status.write("📡 Buscando informações atualizadas...")
             history = st.session_state.messages[:-1]
             response = send_message_to_n8n(prompt, history)
             status.update(label="✅ Resposta Gerada", state="complete", expanded=False)
