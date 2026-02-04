@@ -75,12 +75,11 @@ Copie `.env.example` para `.env` e configure:
 
 ## 🌐 Deploy
 
-### Netlify (Frontend)
+### GitHub Pages (Automático)
 
-1. Conectar repo no Netlify
-2. Build command: `npm run build`
-3. Publish directory: `dist`
-4. Configurar variáveis de ambiente
+1. O deploy é feito automaticamente a cada push na branch `main`.
+2. Configure o segredo `VITE_WEBHOOK_URL` em **Settings > Secrets and variables > Actions**.
+3. Acesse a aba **Actions** para conferir o status.
 
 ## 📄 Licença
 
