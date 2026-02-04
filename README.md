@@ -3,8 +3,7 @@
 Sistema de gestão inteligente para gráfica com dashboard, pedidos e chat IA.
 
 ## 🚀 Live Demo
-**Acesse no Netlify:** (O link será gerado pelo Netlify após o deploy)
-<!-- Last Deploy Trigger: Forced Redploy -->
+**Acesse aqui:** [https://arthurpessoaa.github.io/Grafica_project/](https://arthurpessoaa.github.io/Grafica_project/)
 
 ## 🚀 Stack
 
@@ -76,11 +75,12 @@ Copie `.env.example` para `.env` e configure:
 
 ## 🌐 Deploy
 
-### Netlify (Configurado)
+### GitHub Pages (Automático)
 
-1. O deploy é feito automaticamente pelo Netlify a cada push.
-2. Certifique-se de que a variável `VITE_WEBHOOK_URL` está configurada no painel do Netlify.
-3. O arquivo `netlify.toml` já configura o build e redirecionamentos.
+1. **Requisito:** O repositório deve ser Público (ou você deve ter GitHub Pro).
+2. O deploy é feito via GitHub Actions na branch `main`.
+3. Configure `VITE_WEBHOOK_URL` em **Settings > Secrets > Actions**.
+4. Em **Settings > Pages**, selecione Source: `Deploy from a branch` e Branch: `gh-pages`.
 
 ## 📄 Licença
 
