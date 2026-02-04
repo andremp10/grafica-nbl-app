@@ -70,7 +70,8 @@ const App: React.FC = () => {
       const responseText = await chatWithIA(input, history);
       setMessages(prev => [...prev, { role: 'model', text: responseText || 'Erro no processamento.', timestamp: new Date() }]);
     } catch (error) {
-      setMessages(prev => [...prev, { role: 'model', text: 'Sem conexão com NBL Cloud.', timestamp: new Date() }]);
+    } catch (error: any) {
+      setMessages(prev => [...prev, { role: 'model', text: error.message || 'Sem conexão com NBL Cloud.', timestamp: new Date() }]);
     } finally {
       setIsLoading(false);
     }
