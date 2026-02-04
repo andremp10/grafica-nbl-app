@@ -11,6 +11,7 @@ from data.supabase_repo import (
     fetch_kpis_financeiro,
     fetch_kpis_pedidos,
     fetch_pedidos,
+    fetch_snapshot_meta,
 )
 from services.n8n_service import send_message_to_n8n
 
@@ -98,6 +99,17 @@ def kpi_card(label: str, value: object, delta: Optional[str] = None, color: str 
         f'<div class="metric-val">{value_html}</div>{delta_html}</div>'
     )
 
+def _format_iso_dt(value: object) -> str:
+    """Safe formatting for timestamps coming from Supabase (timestamptz)."""
+    if not value:
+        return "-"
+    try:
+        text = str(value)
+        dt_value = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return dt_value.strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return str(value)
+
 
 def _to_date_bounds(date_value: object) -> tuple[Optional[str], Optional[str]]:
     if isinstance(date_value, Sequence) and not isinstance(date_value, (str, bytes)):
@@ -141,41 +153,96 @@ def _safe_dataframe(df, preferred_order, preferred_config, **kwargs):
 
 
 def render_instructions():
-    st.markdown("### 📘 Manual do Usuario NBL Admin")
+    st.markdown("### 📘 Instruções (Snapshot Diário)")
     st.divider()
 
-    with st.expander("🎯 Visao Geral", expanded=True):
-        st.markdown(
-            """
-        O **NBL Admin** e o painel de controle da grafica, conectado diretamente ao Supabase.
-
-        - **Status (PCP)**: acompanhe pedidos em tempo real
-        - **Financeiro**: visualize entradas, saidas e fluxo de caixa
-        - **Chat**: converse com a IA para consultas rapidas
+    st.markdown(
         """
-        )
+Este app **não é realtime**: ele funciona em modo **snapshot diário**.
 
-    with st.expander("📊 Dashboard PCP"):
-        st.markdown(
-            """
-        **Filtros disponiveis:**
-        - periodo de criacao
-        - status do pedido
-        - apenas atrasados/finalizados
-        - busca por cliente
-        """
-        )
+Os dados são atualizados **1x por dia**, na madrugada (truncate + reload).
+O Streamlit usa cache e um *token do snapshot* para não ficar consultando o banco o tempo todo
+e para evitar telas vazias durante o período de atualização.
+"""
+    )
 
-    with st.expander("💰 Dashboard Financeiro"):
-        st.markdown(
-            """
-        **Filtros disponiveis:**
-        - competencia (mes)
-        - tipo (Entrada/Saida)
-        - status
-        - categoria
-        """
+    st.markdown("#### ✅ Status do Sistema")
+    if is_connected():
+        meta = fetch_snapshot_meta()
+        finished_at = meta.get("snapshot_finished_at")
+        is_running = bool(meta.get("is_running"))
+
+        st.success("Supabase conectado.")
+        if finished_at:
+            st.info(f"Último snapshot concluído em: `{_format_iso_dt(finished_at)}`")
+        else:
+            st.warning(
+                "Snapshot meta ainda não configurado no banco. "
+                "Aplique a migration `etl/migrations/003_snapshot_meta.sql`."
+            )
+        if is_running:
+            st.warning("Atualização em andamento: o app mantém o último snapshot bem-sucedido em cache.")
+    else:
+        st.error("Supabase offline: configure as secrets para liberar PCP/Financeiro.")
+
+    st.markdown("#### 🔑 Configurar Secrets (Streamlit Cloud)")
+    st.markdown(
+        "No Streamlit Cloud, vá em **Manage app → Settings → Secrets** e adicione:"
+    )
+    st.code(
+        "\n".join(
+            [
+                'SUPABASE_URL = \"https://<seu-projeto>.supabase.co\"',
+                'SUPABASE_ANON_KEY = \"<sua-anon-key>\"',
+                'WEBHOOK_URL = \"https://<seu-n8n>/webhook/...\"',
+            ]
+        ),
+        language="toml",
+    )
+    st.caption("Recomendado: usar `SUPABASE_ANON_KEY` no app (não use service_role no Streamlit Cloud).")
+
+    st.markdown("#### 🧱 Migrações SQL (1x)")
+    st.markdown(
+        "\n".join(
+            [
+                "Execute no Supabase SQL Editor (na ordem):",
+                "",
+                "1. `etl/migrations/001_create_dashboard_views.sql`",
+                "2. `etl/migrations/002_dashboard_views_rpc_grants.sql`",
+                "3. `etl/migrations/003_snapshot_meta.sql`",
+            ]
         )
+    )
+
+    st.markdown("#### 🕒 ETL Diário (ação do backend)")
+    st.markdown(
+        """
+No final do ETL (quando os dados já estão 100% carregados), registre o snapshot na tabela:
+
+- `public.etl_snapshots` (`status='success'`, `finished_at=now()`)
+
+O app consulta o RPC `get_snapshot_meta()` para detectar mudança e atualizar o cache automaticamente.
+"""
+    )
+    st.code(
+        "\n".join(
+            [
+                "-- Início do ETL",
+                "insert into public.etl_snapshots(status, note) values ('running', 'carga diaria');",
+                "",
+                "-- Fim do ETL (marcar sucesso no ultimo run 'running')",
+                "update public.etl_snapshots",
+                "set status='success', finished_at=now()",
+                "where id = (",
+                "  select id from public.etl_snapshots",
+                "  where status='running'",
+                "  order by started_at desc, id desc",
+                "  limit 1",
+                ");",
+            ]
+        ),
+        language="sql",
+    )
 
 
 # =============================================================================
@@ -184,14 +251,19 @@ def render_instructions():
 
 
 def render_status_view():
-    st.markdown("### 🏭 Chao de Fabrica (PCP)")
-    st.caption("Visualizacao em tempo real da producao - dados do Supabase")
+    st.markdown("### 🏭 Chão de Fábrica (PCP)")
+    st.caption("Snapshot diário da produção (atualizado 1x por dia) - dados do Supabase")
 
     if not is_connected():
-        st.warning("⚠️ Supabase nao configurado. Defina SUPABASE_URL e SUPABASE_KEY.")
+        st.warning("⚠️ Supabase não configurado. Defina `SUPABASE_URL` + `SUPABASE_ANON_KEY` (ou `SUPABASE_KEY`).")
         return
 
     st.divider()
+
+    snapshot = fetch_snapshot_meta()
+    snapshot_key = snapshot.get("cache_key")
+    if snapshot.get("snapshot_finished_at"):
+        st.caption(f"Última atualização: `{_format_iso_dt(snapshot.get('snapshot_finished_at'))}`")
 
     col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 1, 1])
     with col_f1:
@@ -211,7 +283,7 @@ def render_status_view():
     data_inicio, data_fim = _to_date_bounds(data_range)
 
     with st.spinner("Carregando KPIs..."):
-        kpis = fetch_kpis_pedidos(data_inicio, data_fim)
+        kpis = fetch_kpis_pedidos(data_inicio, data_fim, snapshot_key=snapshot_key)
 
     total = int(kpis.get("total_pedidos", 0))
     atrasados = int(kpis.get("total_atrasados", 0))
@@ -239,6 +311,7 @@ def render_status_view():
             is_finalizado=True if show_finalizados else None,
             client_name=cliente_search or None,
             page_size=500,
+            snapshot_key=snapshot_key,
         )
 
     if df.empty:
@@ -276,13 +349,18 @@ def render_status_view():
 
 def render_finance_view():
     st.markdown("### 💰 Controladoria Financeira")
-    st.caption("Analise de fluxo de caixa e resultados - dados do Supabase")
+    st.caption("Snapshot diário do financeiro (atualizado 1x por dia) - dados do Supabase")
 
     if not is_connected():
-        st.warning("⚠️ Supabase nao configurado.")
+        st.warning("⚠️ Supabase não configurado.")
         return
 
     st.divider()
+
+    snapshot = fetch_snapshot_meta()
+    snapshot_key = snapshot.get("cache_key")
+    if snapshot.get("snapshot_finished_at"):
+        st.caption(f"Última atualização: `{_format_iso_dt(snapshot.get('snapshot_finished_at'))}`")
 
     col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
     hoje = datetime.now()
@@ -304,6 +382,7 @@ def render_finance_view():
         start_date=comp_inicio,
         end_date=comp_fim,
         page_size=500,
+        snapshot_key=snapshot_key,
     )
     categories = ["Todas"]
     if not base_df.empty and "categoria" in base_df.columns:
@@ -313,7 +392,7 @@ def render_finance_view():
         cat_filter = st.selectbox("Categoria", categories, key="fin_categoria")
 
     with st.spinner("Carregando KPIs..."):
-        kpis = fetch_kpis_financeiro(comp_inicio, comp_fim)
+        kpis = fetch_kpis_financeiro(comp_inicio, comp_fim, snapshot_key=snapshot_key)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -342,6 +421,7 @@ def render_finance_view():
             status_codigo=status_code,
             categoria=cat_filter if cat_filter != "Todas" else None,
             page_size=500,
+            snapshot_key=snapshot_key,
         )
 
     if df.empty:
@@ -448,9 +528,14 @@ def main():
     with st.sidebar:
         st.title("🎨 NBL Admin")
         if is_connected():
-            st.caption("v6.2 • 🟢 Supabase Conectado")
+            st.caption("v6.3 • 🟢 Supabase Conectado")
+            meta = fetch_snapshot_meta()
+            if meta.get("snapshot_finished_at"):
+                st.caption(f"Snapshot: {_format_iso_dt(meta.get('snapshot_finished_at'))}")
+            if meta.get("is_running"):
+                st.caption("⏳ Atualização em andamento")
         else:
-            st.caption("v6.2 • 🔴 Supabase Offline")
+            st.caption("v6.3 • 🔴 Supabase Offline")
 
         st.divider()
         menu = {

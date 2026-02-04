@@ -8,9 +8,10 @@ from supabase import create_client
 
 from data.supabase_client import get_supabase_client
 
-PAGE_SIZE_DEFAULT = 200
-TTL_DATA = 300
-TTL_KPI = 600
+PAGE_SIZE_DEFAULT = int(os.getenv("DASHBOARD_PAGE_SIZE", "200"))
+TTL_SNAPSHOT_META = int(os.getenv("SNAPSHOT_META_TTL_S", "60"))
+TTL_DATA = int(os.getenv("DASHBOARD_DATA_TTL_S", str(60 * 60 * 6)))
+TTL_KPI = int(os.getenv("DASHBOARD_KPI_TTL_S", str(60 * 60 * 6)))
 DATE_MIN = "1900-01-01"
 DATE_MAX = "2100-12-31"
 PEDIDOS_COUNT_PROBES = ("pedido_id", "status_pedido", "cliente_nome")
@@ -136,6 +137,40 @@ def _compute_finance_kpis_fallback(
 
     return _compute_finance_kpis_from_rows(rows)
 
+@st.cache_data(ttl=TTL_SNAPSHOT_META)
+def fetch_snapshot_meta() -> Dict[str, Any]:
+    """
+    Metadados do ultimo snapshot diario.
+
+    Para funcionar completo, aplique a migration:
+    - etl/migrations/003_snapshot_meta.sql
+    """
+    client = get_supabase_client()
+    if not client:
+        return {"is_configured": False, "cache_key": "offline"}
+
+    data: Dict[str, Any] = {}
+    try:
+        response = client.rpc("get_snapshot_meta", {}).execute()
+        payload = response.data
+        if isinstance(payload, list):
+            payload = payload[0] if payload else {}
+        if isinstance(payload, dict):
+            data = payload
+    except Exception as exc:
+        # Se o RPC ainda nao existe, cai aqui.
+        print(f"Error fetching snapshot meta: {exc}")
+
+    # Fallback diario para nao prender cache para sempre antes do RPC existir.
+    cache_key = str(
+        data.get("snapshot_id")
+        or data.get("snapshot_finished_at")
+        or time.strftime("%Y-%m-%d")
+    )
+    data["cache_key"] = cache_key
+    data["is_configured"] = True
+    return data
+
 
 @st.cache_data(ttl=TTL_DATA)
 def fetch_pedidos(
@@ -147,7 +182,10 @@ def fetch_pedidos(
     is_finalizado: Optional[bool] = None,
     page: int = 0,
     page_size: int = PAGE_SIZE_DEFAULT,
+    snapshot_key: Optional[str] = None,
 ) -> pd.DataFrame:
+    # snapshot_key exists only to invalidate Streamlit cache when the daily snapshot changes.
+    _ = snapshot_key
     client = get_supabase_client()
     if not client:
         return pd.DataFrame()
@@ -177,7 +215,8 @@ def fetch_pedidos(
 
 
 @st.cache_data(ttl=TTL_KPI)
-def fetch_kpis_pedidos(start_date: str, end_date: str) -> Dict[str, Any]:
+def fetch_kpis_pedidos(start_date: str, end_date: str, snapshot_key: Optional[str] = None) -> Dict[str, Any]:
+    _ = snapshot_key
     client = get_supabase_client()
     if not client:
         return {"total_pedidos": 0, "total_atrasados": 0, "total_finalizados": 0}
@@ -217,7 +256,9 @@ def fetch_financeiro(
     categoria: Optional[str] = None,
     page: int = 0,
     page_size: int = PAGE_SIZE_DEFAULT,
+    snapshot_key: Optional[str] = None,
 ) -> pd.DataFrame:
+    _ = snapshot_key
     client = get_supabase_client()
     if not client:
         return pd.DataFrame()
@@ -247,7 +288,8 @@ def fetch_financeiro(
 
 
 @st.cache_data(ttl=TTL_KPI)
-def fetch_kpis_financeiro(start_date: str, end_date: str) -> Dict[str, float]:
+def fetch_kpis_financeiro(start_date: str, end_date: str, snapshot_key: Optional[str] = None) -> Dict[str, float]:
+    _ = snapshot_key
     client = get_supabase_client()
     if not client:
         return FINANCE_KPI_DEFAULT.copy()

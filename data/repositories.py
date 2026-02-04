@@ -11,6 +11,7 @@ from data.supabase_repo import (  # noqa: F401
     fetch_kpis_financeiro,
     fetch_kpis_pedidos,
     fetch_pedidos,
+    fetch_snapshot_meta,
 )
 
 __all__ = [
@@ -19,4 +20,5 @@ __all__ = [
     "fetch_kpis_pedidos",
     "fetch_financeiro",
     "fetch_kpis_financeiro",
+    "fetch_snapshot_meta",
 ]
