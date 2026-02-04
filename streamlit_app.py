@@ -2,10 +2,9 @@ import streamlit as st
 import time
 import random
 import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 from dotenv import load_dotenv
-from services.n8n_service import get_webhook_url, send_message_to_n8n
+from services.n8n_service import send_message_to_n8n
 
 # --- 1. CONFIGURAÇÃO ---
 load_dotenv()
@@ -205,7 +204,7 @@ def render_instructions():
 
 def render_finance_view():
     st.markdown("### 💰 Controladoria Financeira")
-    st.caption("Análise detalhada de Fluxo de Caixa (Baseado em `is_financeiro_lancamentos`)")
+    st.caption("Análise detalhada de Fluxo de Caixa e Resultados do Mês")
     st.divider()
     
     # Gerar dados
@@ -341,7 +340,7 @@ def main():
 
     with st.sidebar:
         st.title("🎨 NBL Admin")
-        st.caption("v5.1 • Conectado")
+        st.caption("v5.4 • Conectado")
         st.divider()
         menu = {"💬 Chat": "Chat", "🏭 Status (PCP)": "Status", "💰 Financeiro": "Financeiro", "ℹ️ Instruções": "Instruções"}
         for k,v in menu.items():
