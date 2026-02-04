@@ -1,10 +1,12 @@
 import streamlit as st
 import time
 import random
+import pandas as pd
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
-from services.n8n_service import get_webhook_url, probe_webhook, send_message_to_n8n
+from services.n8n_service import get_webhook_url, send_message_to_n8n
 
-# --- 1. CONFIGURAÇÃO (Page Config) ---
+# --- 1. CONFIGURAÇÃO ---
 load_dotenv()
 st.set_page_config(
     page_title="Gráfica NBL Admin",
@@ -13,219 +15,215 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. CSS MÍNIMO (Acabamento) ---
+# --- 2. CSS (Acabamento) ---
 st.markdown("""
 <style>
-    /* Ajuste de largura e padding central */
-    .main .block-container {
-        max-width: 900px;
-        padding-top: 1rem;
-        padding-bottom: 5rem;
+    .main .block-container {max-width: 1000px; padding-top: 2rem; padding-bottom: 5rem;}
+    
+    /* Cards Dashboard */
+    .metric-container {
+        background-color: #1a1a1a;
+        border: 1px solid #333;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+    }
+    .metric-value {font-size: 28px; font-weight: bold; color: #fff;}
+    .metric-label {font-size: 14px; color: #888; text-transform: uppercase;}
+    .metric-delta {font-size: 14px; margin-top: 5px;}
+    .up {color: #22c55e;}
+    .down {color: #ef4444;}
+    
+    /* Footer */
+    .footer {
+        position: fixed; bottom: 10px; left: 20px;
+        font-size: 12px; color: #555; pointer-events: none;
     }
     
-    /* Cards de Ação Rápida */
-    .quick-card {
-        background-color: #1c1c1c;
-        border: 1px solid #333;
-        border-radius: 8px;
-        padding: 1rem;
-        text-align: center;
-        cursor: pointer;
-        transition: transform 0.1s, border-color 0.1s;
-    }
-    .quick-card:hover {
-        transform: translateY(-2px);
-        border-color: #2563eb;
-    }
-    .quick-card h4 {
-        margin: 0;
-        font-size: 1rem;
-        color: #fff;
-    }
-    .quick-card p {
-        margin: 0;
-        font-size: 0.8rem;
-        color: #888;
-    }
-
-    /* Ajuste Status Badge */
-    .status-dot {
-        height: 8px;
-        width: 8px;
-        background-color: #22c55e;
-        border-radius: 50%;
-        display: inline-block;
-        margin-right: 6px;
-    }
-    .status-dot.offline {
-        background-color: #ef4444;
-    }
+    /* Quick Actions */
+    .stButton button {width: 100%; border-radius: 8px;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. GESTÃO DE ESTADO (Init State) ---
-def init_state():
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    if "current_view" not in st.session_state:
-        st.session_state.current_view = "Chat"  # Chat, Status, Faturamento, Relatórios
-    if "pending_prompt" not in st.session_state:
-        st.session_state.pending_prompt = None
-
-init_state()
-
-# --- 4. COMPONENTES DE UI ---
-
-def render_sidebar():
-    with st.sidebar:
-        st.caption("Navegação")
-        
-        # Menu principal
-        selected = st.radio(
-            "Módulos",
-            options=["Chat", "Status de Pedidos", "Faturamento", "Relatórios"],
-            label_visibility="collapsed"
-        )
-        
-        # Atualiza view se mudar
-        if selected != st.session_state.current_view:
-            st.session_state.current_view = selected
-            st.rerun()
-
-        st.divider()
-        
-        # Informações de suporte
-        st.caption("Suporte")
-        st.info("Para dúvidas, use o chat ou contate o suporte técnico.")
-
-def render_topbar():
-    # Topbar contextual usando colunas
-    c1, c2, c3 = st.columns([3, 1, 1])
+# --- 3. DADOS MOCKADOS (GRÁFICA) ---
+def get_mock_data():
+    clients = ["Restaurante Sabor & Arte", "Imobiliária Central", "Clínica Bem Estar", "Advocacia Silva", "Academia Fit"]
+    products = ["Cardápios A4", "Folders Triplos", "Cartões de Visita", "Banners 60x90", "Adesivos 5x5"]
+    status_list = ["🎨 Arte", "🖨️ Impressão", "✂️ Acabamento", "✅ Entregue", "📦 Retirada"]
     
-    with c1:
-        st.markdown("### 🎨 Gráfica NBL Admin")
-        st.caption("Sistema Integrado de Gestão & Assistente IA")
-    
-    with c2:
-        webhook_ok = bool(get_webhook_url())
-        status_color = "green" if webhook_ok else "red"
-        status_text = "Online" if webhook_ok else "Offline"
-        st.markdown(f"<div style='margin-top: 10px; text-align: right;'><span class='status-dot {'offline' if not webhook_ok else ''}'></span>{status_text}</div>", unsafe_allow_html=True)
-        
-    with c3:
-        if st.button("Limpar Chat", type="secondary", use_container_width=True):
-            st.session_state.messages = []
-            st.rerun()
+    data = []
+    base_date = datetime.now()
+    for i in range(25):
+        data.append({
+            "Pedido": f"#{2400+i}",
+            "Cliente": random.choice(clients),
+            "Produto": random.choice(products),
+            "Valor": random.randint(150, 2500),
+            "Status": random.choice(status_list),
+            "Data": (base_date - timedelta(days=random.randint(0, 10))).strftime("%d/%m")
+        })
+    return pd.DataFrame(data)
 
-def render_quick_actions():
-    st.markdown("##### Ações Rápidas")
+df_orders = get_mock_data()
+
+# --- 4. VIEWS DE DASHBOARD ---
+
+def render_status_view():
+    st.title("🏭 Status de Produção")
+    st.divider()
+    
+    # KPIs
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.markdown('<div class="metric-container"><div class="metric-value">08</div><div class="metric-label">Na Fila</div></div>', unsafe_allow_html=True)
+    with c2: st.markdown('<div class="metric-container"><div class="metric-value">12</div><div class="metric-label">Em Produção</div></div>', unsafe_allow_html=True)
+    with c3: st.markdown('<div class="metric-container"><div class="metric-value">03</div><div class="metric-label">Atrasados</div><div class="metric-delta down">⚠️ Atenção</div></div>', unsafe_allow_html=True)
+    with c4: st.markdown('<div class="metric-container"><div class="metric-value">98%</div><div class="metric-label">No Prazo</div><div class="metric-delta up">▲ Excelente</div></div>', unsafe_allow_html=True)
+    
+    st.markdown("### 📋 Fila de Produção")
+    
+    # Filtros
+    col1, col2 = st.columns([3, 1])
+    with col1: query = st.text_input("Buscar cliente ou pedido", placeholder="Digite para filtrar...")
+    with col2: st_filter = st.selectbox("Status", ["Todos"] + list(df_orders["Status"].unique()))
+    
+    filtered = df_orders
+    if query: filtered = filtered[filtered["Cliente"].str.contains(query, case=False) | filtered["Pedido"].str.contains(query)]
+    if st_filter != "Todos": filtered = filtered[filtered["Status"] == st_filter]
+    
+    st.dataframe(
+        filtered,
+        column_config={
+            "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Status": st.column_config.TextColumn("Status", help="Fase atual")
+        },
+        use_container_width=True,
+        hide_index=True
+    )
+
+def render_billing_view():
+    st.title("💰 Financeiro")
+    st.divider()
     
     c1, c2, c3 = st.columns(3)
+    with c1: st.markdown('<div class="metric-container"><div class="metric-value">R$ 14.5k</div><div class="metric-label">Faturamento Mês</div><div class="metric-delta up">▲ 12% vs mês anterior</div></div>', unsafe_allow_html=True)
+    with c2: st.markdown('<div class="metric-container"><div class="metric-value">R$ 480</div><div class="metric-label">Ticket Médio</div></div>', unsafe_allow_html=True)
+    with c3: st.markdown('<div class="metric-container"><div class="metric-value">R$ 2.8k</div><div class="metric-label">A Receber</div></div>', unsafe_allow_html=True)
     
-    # Card 1: Status
-    with c1:
-        if st.button("📦 Status Pedidos", use_container_width=True):
-            st.session_state.pending_prompt = "Qual o status dos pedidos em aberto?"
-            st.rerun()
-            
-    # Card 2: Faturamento
-    with c2:
-        if st.button("💰 Faturamento Mês", use_container_width=True):
-            st.session_state.pending_prompt = "Como está o faturamento deste mês?"
-            st.rerun()
-            
-    # Card 3: Relatório
-    with c3:
-        if st.button("📊 Relatório Geral", use_container_width=True):
-            st.session_state.pending_prompt = "Gere um relatório geral da operação."
-            st.rerun()
-            
-    st.divider()
+    st.markdown("### 📈 Evolução de Vendas (30 dias)")
+    chart_data = pd.DataFrame({
+        "Data": [(datetime.now() - timedelta(days=i)).strftime("%d/%m") for i in range(15)][::-1],
+        "Vendas": [random.randint(2000, 6000) for _ in range(15)]
+    }).set_index("Data")
+    st.line_chart(chart_data, color="#2563eb", height=300)
 
-def render_chat_area():
-    # Container para mensagens
-    chat_container = st.container()
+def render_instructions_view():
+    st.title("ℹ️ Instruções e Ajuda")
+    st.markdown("""
+    ### Bem-vindo ao NBL Admin
     
-    # Exibir mensagens
-    with chat_container:
-        if not st.session_state.messages:
-            st.info("👋 Olá! Sou o assistente da Gráfica NBL. Selecione uma ação acima ou digite sua dúvida.")
-        
-        for msg in st.session_state.messages:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
+    Este sistema foi desenvolvido para facilitar a gestão da Gráfica NBL.
+    
+    #### 🤖 Como usar o Assistente IA
+    - O **chat** está conectado à base de conhecimento da empresa.
+    - Você pode perguntar sobre **preços**, **prazos**, **status de pedidos** e **procedimentos**.
+    - Use os botões de ação rápida para consultas frequentes.
+    
+    #### 📊 Dashboards
+    - **Status de Pedidos**: Acompanhe o fluxo de produção em tempo real.
+    - **Faturamento**: Visão financeira gerencial.
+    
+    #### 📞 Suporte
+    - Desenvolvido por **Golfine Tecnologia**
+    - Suporte técnico: (11) 99999-9999
+    - Email: suporte@golfine.tech
+    """)
 
-    # Lógica de envio (Pending Prompt ou Input)
-    prompt = st.chat_input("Digite sua mensagem...")
+# --- 5. CHAT & LOADING DINÂMICO ---
+
+def render_chat_view():
+    # Quick Actions
+    c1, c2, c3 = st.columns(3)
+    if c1.button("📦 Meus Pedidos"): st.session_state.pending_prompt = "Quais pedidos estão em produção hoje?"
+    if c2.button("💰 Fechamento"): st.session_state.pending_prompt = "Quanto faturamos nesta semana?"
+    if c3.button("📊 Relatório"): st.session_state.pending_prompt = "Gere um resumo da operação de ontem."
     
-    if st.session_state.pending_prompt:
+    # Mensagens
+    for msg in st.session_state.messages:
+        align = "user" if msg["role"] == "user" else "assistant"
+        with st.chat_message(align):
+            st.markdown(msg["content"])
+            
+    # Input
+    if prompt := st.chat_input("Como posso ajudar?"):
+        st.session_state.pending_prompt = prompt
+        st.rerun()
+
+    # Processamento Pending
+    if st.session_state.get("pending_prompt"):
         prompt = st.session_state.pending_prompt
         st.session_state.pending_prompt = None
-    
-    if prompt:
-        # Exibe mensagem do usuário
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with chat_container:
-            with st.chat_message("user"):
-                st.markdown(prompt)
         
-        # Processamento com Spinner
-        with st.spinner("Processando solicitação..."):
+        # User MSG
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"): st.markdown(prompt)
+        
+        # STATUS LOADING ANIMADO
+        with st.status("🚀 Iniciando assistente...", expanded=True) as status:
+            time.sleep(1) # UX Timing
+            status.write("🔍 Analisando sua solicitação...")
+            time.sleep(1.5)
+            status.write("📊 Consultando banco de dados...")
+            time.sleep(1.5)
+            status.write("🧠 Gerando resposta inteligente...")
+            
             history = st.session_state.messages[:-1]
             response = send_message_to_n8n(prompt, history)
             
-            if not response:
-                response = "Desculpe, não consegui obter uma resposta do servidor. Tente novamente."
-        
-        # Exibe resposta da IA
-        st.session_state.messages.append({"role": "assistant", "content": response})
-        with chat_container:
-            with st.chat_message("assistant"):
-                st.markdown(response)
-        
-        # Rerun para atualizar estado visualmente limpo
-        st.rerun()
+            status.update(label="✅ Resposta gerada!", state="complete", expanded=False)
+            
+        # Assistant MSG
+        reply = response or "Ocorreu um erro ao processar."
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+        with st.chat_message("assistant"): st.markdown(reply)
 
-# --- 5. LOGICA DE MÓDULOS (Dashboard, etc.) ---
-
-def render_dashboard_view():
-    st.title("📊 Status de Pedidos")
-    st.info("Módulo visual em desenvolvimento. Use o Chat para consultar status reais.")
-    
-    # Mock data simples para não ficar vazio
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Pedidos Hoje", "12", "+2")
-    c2.metric("Pendentes", "5", "-1")
-    c3.metric("Entregues", "85%", "+5%")
-    
-    st.markdown("### Pedidos Recentes")
-    st.dataframe([
-        {"ID": 101, "Cliente": "Padaria Estrela", "Status": "Produção", "Valor": "R$ 450,00"},
-        {"ID": 102, "Cliente": "Advocacia Silva", "Status": "Arte", "Valor": "R$ 120,00"},
-        {"ID": 103, "Cliente": "Mercado Central", "Status": "Entregue", "Valor": "R$ 890,00"},
-    ])
-
-# --- 6. APP PRINCIPAL (Main Loop) ---
+# --- 6. MAIN APP ---
 
 def main():
-    render_sidebar()
-    render_topbar()
-    
-    # Roteamento de Views
-    view = st.session_state.current_view
-    
-    if view == "Chat":
-        render_quick_actions()
-        render_chat_area()
+    # Sidebar
+    with st.sidebar:
+        st.title("🎨 NBL Admin")
+        st.caption("v4.1 • Golfine Tecnologia")
+        st.divider()
         
-    elif view in ["Status de Pedidos", "Faturamento", "Relatórios"]:
-        # Por enquanto, esses módulos podem usar a mesma view de Dashboard ou customizadas
-        render_dashboard_view()
+        menu = {
+            "💬 Assistente": "Chat",
+            "🏭 Status": "Status",
+            "💰 Financeiro": "Financeiro",
+            "ℹ️ Instruções": "Instruções"
+        }
         
-        # Botão para voltar ao chat rápido
-        if st.button("💬 Voltar ao Chat", type="primary"):
-            st.session_state.current_view = "Chat"
+        for label, view in menu.items():
+            if st.button(label, use_container_width=True, type="primary" if st.session_state.get("current_view") == view else "secondary"):
+                st.session_state.current_view = view
+                st.rerun()
+                
+        st.markdown("<div style='flex:1'></div>", unsafe_allow_html=True)
+        st.divider()
+        st.caption("Desenvolvido por\n**Golfine Tecnologia**")
+        if st.button("Limpar Chat"):
+            st.session_state.messages = []
             st.rerun()
+
+    # Init State
+    if "current_view" not in st.session_state: st.session_state.current_view = "Chat"
+    if "messages" not in st.session_state: st.session_state.messages = []
+    
+    # Routing
+    view = st.session_state.current_view
+    if view == "Chat": render_chat_view()
+    elif view == "Status": render_status_view()
+    elif view == "Financeiro": render_billing_view()
+    elif view == "Instruções": render_instructions_view()
 
 if __name__ == "__main__":
     main()
