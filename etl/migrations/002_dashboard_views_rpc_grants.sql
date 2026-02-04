@@ -17,8 +17,8 @@ WITH agg_itens AS (
         pedido_id,
         COUNT(*)::integer AS qtde_itens,
         COALESCE(SUM(valor * COALESCE(qtde, 1)), 0) AS valor_itens,
-        MIN(previsao_producao) AS data_prazo,
-        MAX(previsao_entrega) AS data_entrega,
+        MIN(CASE WHEN previsao_producao < '1900-01-01' THEN NULL ELSE previsao_producao END) AS data_prazo,
+        MAX(CASE WHEN previsao_entrega < '1900-01-01' THEN NULL ELSE previsao_entrega END) AS data_entrega,
         string_agg(DISTINCT status, ', ' ORDER BY status) AS status_agregado
     FROM public.is_pedidos_itens
     GROUP BY pedido_id

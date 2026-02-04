@@ -10,8 +10,8 @@ from data.supabase_client import get_supabase_client
 
 PAGE_SIZE_DEFAULT = int(os.getenv("DASHBOARD_PAGE_SIZE", "200"))
 TTL_SNAPSHOT_META = int(os.getenv("SNAPSHOT_META_TTL_S", "60"))
-TTL_DATA = int(os.getenv("DASHBOARD_DATA_TTL_S", str(60 * 60 * 6)))
-TTL_KPI = int(os.getenv("DASHBOARD_KPI_TTL_S", str(60 * 60 * 6)))
+TTL_DATA = int(os.getenv("DASHBOARD_DATA_TTL_S", str(60 * 60 * 24)))
+TTL_KPI = int(os.getenv("DASHBOARD_KPI_TTL_S", str(60 * 60 * 24)))
 DATE_MIN = "1900-01-01"
 DATE_MAX = "2100-12-31"
 PEDIDOS_COUNT_PROBES = ("pedido_id", "status_pedido", "cliente_nome")

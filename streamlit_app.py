@@ -1,3 +1,4 @@
+import os
 import time
 from datetime import datetime, timedelta
 from typing import Optional, Sequence
@@ -110,6 +111,19 @@ def _format_iso_dt(value: object) -> str:
     except Exception:
         return str(value)
 
+def _has_runtime_secret(key: str) -> bool:
+    """Checks Streamlit secrets/env without revealing the value."""
+    variants = [key, key.upper(), key.lower()]
+    for variant in variants:
+        try:
+            if variant in st.secrets and st.secrets.get(variant):
+                return True
+        except Exception:
+            pass
+        if os.getenv(variant):
+            return True
+    return False
+
 
 def _to_date_bounds(date_value: object) -> tuple[Optional[str], Optional[str]]:
     if isinstance(date_value, Sequence) and not isinstance(date_value, (str, bytes)):
@@ -201,6 +215,20 @@ e para evitar telas vazias durante o período de atualização.
     )
     st.caption("Recomendado: usar `SUPABASE_ANON_KEY` no app (não use service_role no Streamlit Cloud).")
 
+    st.markdown("#### 🔎 Diagnóstico de Secrets (sem expor valores)")
+    st.table(
+        [
+            {"Chave": "SUPABASE_URL", "Detectada": _has_runtime_secret("SUPABASE_URL")},
+            {"Chave": "SUPABASE_ANON_KEY", "Detectada": _has_runtime_secret("SUPABASE_ANON_KEY")},
+            {"Chave": "SUPABASE_KEY (fallback)", "Detectada": _has_runtime_secret("SUPABASE_KEY")},
+            {"Chave": "WEBHOOK_URL", "Detectada": _has_runtime_secret("WEBHOOK_URL")},
+        ]
+    )
+    st.caption(
+        "Se estiver tudo como `False`, o Streamlit Cloud não está lendo seus Secrets. "
+        "Confirme o nome das chaves e reinicie o app."
+    )
+
     st.markdown("#### 🧱 Migrações SQL (1x)")
     st.markdown(
         "\n".join(
@@ -212,6 +240,10 @@ e para evitar telas vazias durante o período de atualização.
                 "3. `etl/migrations/003_snapshot_meta.sql`",
             ]
         )
+    )
+    st.caption(
+        "Depois de criar RPCs/views, faça reload do schema cache no Supabase (Settings → API) "
+        "para o app enxergar as funções."
     )
 
     st.markdown("#### 🕒 ETL Diário (ação do backend)")
@@ -528,14 +560,14 @@ def main():
     with st.sidebar:
         st.title("🎨 NBL Admin")
         if is_connected():
-            st.caption("v6.3 • 🟢 Supabase Conectado")
+            st.caption("v6.4 • 🟢 Supabase Conectado")
             meta = fetch_snapshot_meta()
             if meta.get("snapshot_finished_at"):
                 st.caption(f"Snapshot: {_format_iso_dt(meta.get('snapshot_finished_at'))}")
             if meta.get("is_running"):
                 st.caption("⏳ Atualização em andamento")
         else:
-            st.caption("v6.3 • 🔴 Supabase Offline")
+            st.caption("v6.4 • 🔴 Supabase Offline")
 
         st.divider()
         menu = {
