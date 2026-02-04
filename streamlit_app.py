@@ -122,8 +122,9 @@ def get_financeiro_df():
     data = load_mock_data()
     lancamentos = pd.DataFrame(data.get("financeiro_lancamentos", []))
     if not lancamentos.empty:
-        lancamentos["tipo_str"] = lancamentos["tipo"].apply(lambda x: "Receita" if x == 1 else "Despesa")
-        lancamentos = lancamentos.rename(columns={"tipo_str": "tipo"})
+        # Converte tipo numérico (1=Receita, 2=Despesa) para string
+        lancamentos["tipo"] = lancamentos["tipo"].apply(lambda x: "Receita" if x == 1 else "Despesa")
+        lancamentos = lancamentos.reset_index(drop=True)
     return lancamentos
 
 def generate_financial_ledger():
