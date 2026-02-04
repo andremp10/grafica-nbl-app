@@ -290,6 +290,81 @@ def _compute_pedidos_flags(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _fetch_all_pedidos_base(
+    client: Any, start_date: Optional[str], end_date: Optional[str]
+) -> pd.DataFrame:
+    """Fetch all pedidos (id/cliente_id/created_at/total/frete) within a date range."""
+    select = "id,cliente_id,total,frete_valor,created_at"
+    offset = 0
+    rows: list[Dict[str, Any]] = []
+
+    while True:
+        query = client.table("is_pedidos").select(select)
+        if start_date and end_date:
+            query = query.gte("created_at", f"{start_date}T00:00:00").lte(
+                "created_at", f"{end_date}T23:59:59"
+            )
+        query = query.order("created_at", desc=True)
+        response = query.range(offset, offset + POSTGREST_PAGE_ROWS - 1).execute()
+        chunk = response.data or []
+        rows.extend(chunk)
+        if len(chunk) < POSTGREST_PAGE_ROWS:
+            break
+        offset += POSTGREST_PAGE_ROWS
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows).rename(
+        columns={
+            "id": "pedido_id",
+            "total": "valor_total",
+            "frete_valor": "frete_valor",
+            "created_at": "data_criacao",
+        }
+    )
+    df["pedido_id"] = df["pedido_id"].astype(str)
+    df["cliente_id"] = df["cliente_id"].astype(str)
+    df["data_criacao"] = pd.to_datetime(df["data_criacao"], errors="coerce", utc=True)
+    return df
+
+
+def _compute_pedidos_kpis_from_tables(
+    client: Any, start_date: str, end_date: str
+) -> Dict[str, Any]:
+    pedidos_df = _fetch_all_pedidos_base(client=client, start_date=start_date, end_date=end_date)
+    if pedidos_df.empty:
+        return {"total_pedidos": 0, "total_atrasados": 0, "total_finalizados": 0}
+
+    pedido_ids = pedidos_df["pedido_id"].dropna().astype(str).unique().tolist()
+    items_rows = _fetch_all_in(
+        client=client,
+        table="is_pedidos_itens",
+        select="pedido_id,status,previsao_producao,previsao_entrega",
+        column="pedido_id",
+        values=pedido_ids,
+        order=("pedido_id", False),
+    )
+    items_df = pd.DataFrame(items_rows) if items_rows else pd.DataFrame()
+    if not items_df.empty:
+        items_df["pedido_id"] = items_df["pedido_id"].astype(str)
+
+    agg_df = _aggregate_pedidos_items(items_df)
+    merged = pedidos_df.merge(agg_df, on="pedido_id", how="left")
+    merged["status_pedido"] = merged.get("status_pedido").fillna("Sem Status")
+    merged["data_prazo_validada"] = merged.get("data_entrega").combine_first(merged.get("data_prazo"))
+    merged = _compute_pedidos_flags(merged)
+
+    total = int(len(merged))
+    total_atrasados = int(merged.get("is_atrasado", False).sum())
+    total_finalizados = int(merged.get("is_finalizado", False).sum())
+    return {
+        "total_pedidos": total,
+        "total_atrasados": total_atrasados,
+        "total_finalizados": total_finalizados,
+    }
+
+
 def _fetch_pedidos_from_tables(
     client: Any,
     start_date: Optional[str],
@@ -472,6 +547,13 @@ def fetch_kpis_pedidos(start_date: str, end_date: str, snapshot_key: Optional[st
     client = get_supabase_client()
     if not client:
         return {"total_pedidos": 0, "total_atrasados": 0, "total_finalizados": 0}
+
+    # Prefer computing from the source tables. This avoids heavy dashboard views that may
+    # hit PostgREST statement_timeout when computing per-row aggregates.
+    try:
+        return _compute_pedidos_kpis_from_tables(client=client, start_date=start_date, end_date=end_date)
+    except Exception as exc:
+        print(f"Error computing pedidos KPIs via tables: {exc}")
 
     def build_total_query(column: str) -> Any:
         query = client.table("vw_dashboard_pedidos").select(column, count="exact", head=True)
