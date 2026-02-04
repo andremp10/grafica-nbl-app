@@ -238,12 +238,17 @@ e para evitar telas vazias durante o período de atualização.
                 "1. `etl/migrations/001_create_dashboard_views.sql`",
                 "2. `etl/migrations/002_dashboard_views_rpc_grants.sql`",
                 "3. `etl/migrations/003_snapshot_meta.sql`",
+                "4. `etl/migrations/004_optimize_vw_dashboard_pedidos.sql` (recomendado - performance do PCP)",
             ]
         )
     )
     st.caption(
         "Depois de criar RPCs/views, faça reload do schema cache no Supabase (Settings → API) "
         "para o app enxergar as funções."
+    )
+    st.caption(
+        "Se aparecer erro `57014 canceling statement due to statement timeout` ao listar pedidos, "
+        "a migration 004 é obrigatória."
     )
 
     st.markdown("#### 🕒 ETL Diário (ação do backend)")
