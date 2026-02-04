@@ -6,7 +6,7 @@ import ChatInterface from './components/ChatInterface';
 import OrderModal from './components/OrderModal';
 import AnalyticsView from './components/AnalyticsView';
 import { AppView, Message, Order } from './types';
-import { chatWithIA } from './services/geminiService';
+import { chatWithIA } from './services/chatService';
 
 const App: React.FC = () => {
   const [view, setView] = useState<AppView>('home');
@@ -16,7 +16,7 @@ const App: React.FC = () => {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  
+
   // Resizing Logic (Horizontal)
   const [chatWidth, setChatWidth] = useState(380); // Largura inicial em pixels
   const isResizing = useRef(false);
@@ -30,11 +30,11 @@ const App: React.FC = () => {
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!isResizing.current) return;
-    
+
     // Calcula a nova largura baseada na posição do mouse em relação ao final da janela (direita)
     const newWidth = window.innerWidth - e.clientX;
     const thresholdFullscreen = window.innerWidth * 0.70;
-    
+
     // Gatilho automático: se expandir mais que 70% da tela, muda para fullscreen
     if (newWidth >= thresholdFullscreen) {
       setView('fullscreen-chat');
@@ -99,7 +99,7 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen w-full bg-slate-50 overflow-hidden text-slate-800 selection:bg-orange-100 selection:text-orange-900 font-['Inter']">
       <Sidebar currentView={view} setView={handleSetView} />
-      
+
       <div className="flex-1 flex overflow-hidden">
         {/* Main Workspace Area */}
         <main className={`flex flex-col relative overflow-hidden h-full transition-all duration-300 ${view === 'fullscreen-chat' ? 'w-0' : 'flex-1'}`}>
@@ -124,7 +124,7 @@ const App: React.FC = () => {
 
         {/* Vertical Resizer Handle */}
         {view !== 'fullscreen-chat' && (
-          <div 
+          <div
             onMouseDown={startResizing}
             className="w-1.5 h-full bg-transparent hover:bg-orange-400/20 cursor-col-resize flex items-center justify-center group transition-colors relative z-30"
           >
@@ -133,18 +133,18 @@ const App: React.FC = () => {
         )}
 
         {/* Right Side Chat Panel */}
-        <aside 
+        <aside
           style={{ width: view === 'fullscreen-chat' ? '100%' : `${chatWidth}px` }}
           className="bg-white border-l border-orange-100 shadow-[-20px_0_40px_rgba(0,0,0,0.02)] z-20 overflow-hidden flex flex-col transition-[width] duration-75"
         >
-          <ChatInterface 
+          <ChatInterface
             fullscreen={view === 'fullscreen-chat'}
-            messages={messages} 
-            setMessages={setMessages} 
-            input={input} 
-            setInput={setInput} 
-            onSend={handleSend} 
-            isLoading={isLoading} 
+            messages={messages}
+            setMessages={setMessages}
+            input={input}
+            setInput={setInput}
+            onSend={handleSend}
+            isLoading={isLoading}
           />
         </aside>
       </div>
