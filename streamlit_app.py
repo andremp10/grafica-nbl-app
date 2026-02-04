@@ -574,10 +574,11 @@ def render_finance_view():
 
     if not df_fin.empty:
         df_fin = _normalize_financeiro_df(df_fin)
-        # Clean string/category columns
+        # Clean string/category columns - RELAXED REGEX to allow Accents
+        # Removing only strictly unwanted chars: %, @, $, _
         for col in ["categoria", "descricao", "fornecedor"]:
             if col in df_fin.columns:
-                df_fin[col] = df_fin[col].astype(str).str.replace(r'[^A-Za-z0-9 \-\./]+', '', regex=True).str.strip()
+                df_fin[col] = df_fin[col].astype(str).str.replace(r'[%@_\$]', ' ', regex=True).str.strip()
 
         val_receitas = df_fin[df_fin["tipo"] == "Entrada"]["valor"].sum()
         val_despesas = df_fin[df_fin["tipo"] == "Saída"]["valor"].sum()
@@ -634,7 +635,7 @@ def render_finance_view():
     if not df_pedidos.empty:
         # Clean client names
         if "cliente_nome" in df_pedidos.columns:
-             df_pedidos["cliente_nome"] = df_pedidos["cliente_nome"].astype(str).str.replace(r'[^A-Za-z0-9 \.]+', '', regex=True).str.title()
+             df_pedidos["cliente_nome"] = df_pedidos["cliente_nome"].astype(str).str.replace(r'[%@_\$]', ' ', regex=True).str.title()
 
         top_clientes = df_pedidos.groupby("cliente_nome")["valor_total"].sum().reset_index()
         top_clientes = top_clientes.sort_values(by="valor_total", ascending=False).head(10)
@@ -664,6 +665,32 @@ def render_finance_view():
     
     else:
         st.info("Sem dados de vendas para o período.")
+
+    if not df_pedidos.empty:
+        st.divider()
+        st.markdown("##### 📦 Maiores Pedidos")
+        
+        # Clean client name in orders too if strictly needed, but fetch_view usually has standard cols.
+        # df_pedidos already has 'cliente_nome' cleaned above if we used it.
+        
+        top_pedidos_table = (
+            df_pedidos[["cliente_nome", "data_criacao", "valor_total", "qtde_itens", "status_pedido"]]
+            .sort_values(by="valor_total", ascending=False)
+            .head(10)
+        )
+        
+        st.dataframe(
+            top_pedidos_table,
+            column_config={
+                "cliente_nome": st.column_config.TextColumn("Cliente", width="large"),
+                "data_criacao": st.column_config.DatetimeColumn("Data", format="DD/MM/YYYY"),
+                "valor_total": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                "qtde_itens": st.column_config.NumberColumn("Itens"),
+                "status_pedido": st.column_config.TextColumn("Status"),
+            },
+            hide_index=True,
+            use_container_width=True
+        )
 
 
 
