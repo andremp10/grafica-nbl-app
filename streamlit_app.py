@@ -667,7 +667,8 @@ def render_finance_view():
             df_bar = df_chart.head(8).copy()
             
             # WRAP LABELS for legibility on vertical chart
-            df_bar["wrapped_label"] = df_bar["categoria"].apply(lambda x: _wrap_text(x, width=15))
+            # WRAP LABELS: Narrower to fit better
+            df_bar["wrapped_label"] = df_bar["categoria"].apply(lambda x: _wrap_text(x, width=12))
             
             # Calc max for headroom
             max_val = df_bar["valor"].max() if not df_bar.empty else 100
@@ -708,6 +709,8 @@ def render_finance_view():
                     visible=True,
                     range=[0, max_val * 1.25] # More headroom
                 ),
+                bargap=0.15, # Space between bars
+                xaxis_tickfont_size=11, # Smaller text
             )
             
             st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
@@ -723,7 +726,8 @@ def render_finance_view():
              df_pedidos["cliente_nome"] = df_pedidos["cliente_nome"].astype(str).str.replace(r'[%@_\$]', ' ', regex=True).str.title()
         
         # WRAP LABELS (No excessive truncation)
-        df_pedidos["wrapped_name"] = df_pedidos["cliente_nome"].apply(lambda x: _wrap_text(x, width=15))
+        # WRAP LABELS (No excessive truncation)
+        df_pedidos["wrapped_name"] = df_pedidos["cliente_nome"].apply(lambda x: _wrap_text(x, width=12))
 
         top_clientes = df_pedidos.groupby(["cliente_nome", "wrapped_name"])["valor_total"].sum().reset_index()
         top_clientes = top_clientes.sort_values(by="valor_total", ascending=False).head(10)
@@ -761,7 +765,9 @@ def render_finance_view():
             xaxis=dict(
                 tickangle=0, 
                 automargin=True
-            )
+            ),
+            bargap=0.15,
+            xaxis_tickfont_size=11,
         )
         
         st.plotly_chart(fig_cli, use_container_width=True, config={'displayModeBar': False})
