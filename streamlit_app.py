@@ -675,42 +675,42 @@ def render_finance_view():
             
             fig_bar = px.bar(
                 df_bar,
-                x="wrapped_label", # Use wrapped text
-                y="valor",
+                y="wrapped_label", # Wrapped text on Y-axis
+                x="valor", # Value on X-axis (Horizontal)
                 text_auto='.2s',
+                orientation='h', # Horizontal Bar
                 title="",
-                color="categoria", # Sync colors
+                color="categoria", 
                 color_discrete_sequence=colors,
             )
             
             fig_bar.update_traces(
                 textposition='outside',
-                texttemplate='<b>%{y:.2s}</b>', # Bold text
-                hovertemplate = "<b>%{customdata}</b><br>R$ %{y:,.2f}",
-                customdata = df_bar[["categoria"]], # Show full name on hover
+                texttemplate='<b>%{x:.2s}</b>', # Bold text
+                hovertemplate = "<b>%{customdata}</b><br>R$ %{x:,.2f}",
+                customdata = df_bar[["categoria"]], 
                 showlegend=False
             )
             
             fig_bar.update_layout(
                 xaxis_title=None,
                 yaxis_title=None,
-                height=600, # Taller
-                margin=dict(l=0, r=0, t=40, b=120), # Huge bottom margin for labels
+                height=500, 
+                margin=dict(l=0, r=0, t=20, b=50), 
                 showlegend=False,
                 dragmode=False,
-                xaxis=dict(
-                    showgrid=False, 
-                    tickangle=0, 
-                    automargin=True, 
-                ),
                 yaxis=dict(
+                    autorange="reversed", # Top expenses first
+                    showgrid=False
+                ),
+                xaxis=dict(
                     showgrid=True, 
                     gridcolor='#333', 
                     visible=True,
-                    range=[0, max_val * 1.25] # More headroom
+                    side='top'
                 ),
-                bargap=0.15, # Space between bars
-                xaxis_tickfont_size=11, # Smaller text
+                bargap=0.15,
+                xaxis_tickfont_size=11,
             )
             
             st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
@@ -741,33 +741,37 @@ def render_finance_view():
 
         fig_cli = px.bar(
             top_clientes,
-            x="wrapped_name", # Short name on Axis
-            y="valor_total",
+            y="cliente_nome", # Full name on Y-axis (List view)
+            x="valor_total", # Value on X-axis
             text_auto='.2s',
+            orientation='h', # Horizontal Bar
             title="",
         )
         
         fig_cli.update_traces(
             marker_color='#8e44ad', # Deep Purple
-            textposition='outside',
-            texttemplate='<b>%{y:.2s}</b>', # Bold text, short format
-            hovertemplate = "<b>%{customdata}</b><br>R$ %{y:,.2f}",
-            customdata = top_clientes[["cliente_nome"]] # Full name on hover
+            textposition='outside', # Value at end of bar
+            texttemplate='<b>%{x:.2s}</b>', # Bold text
+            hovertemplate = "<b>%{y}</b><br>R$ %{x:,.2f}"
         )
         
         fig_cli.update_layout(
-            xaxis_title=None,
-            yaxis_title="Total Comprado (R$)",
+            xaxis_title="Total Comprado (R$)",
+            yaxis_title=None,
             height=600, 
-            margin=dict(l=0, r=0, t=20, b=120), # Huge margin for names
+            margin=dict(l=0, r=0, t=20, b=50), 
             showlegend=False,
             dragmode=False,
-            xaxis=dict(
-                tickangle=0, 
-                automargin=True
+            yaxis=dict(
+                autorange="reversed", # #1 at top
+                showgrid=False
             ),
-            bargap=0.15,
-            xaxis_tickfont_size=11,
+            xaxis=dict(
+                showgrid=True, 
+                gridcolor='#333',
+                side='top' # Axis at top for easier reading
+            ),
+            bargap=0.15
         )
         
         st.plotly_chart(fig_cli, use_container_width=True, config={'displayModeBar': False})
