@@ -1,0 +1,166 @@
+﻿name: Nightly ETL
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Validate only (no truncate/load)'
+        type: boolean
+        default: false
+      backup_date:
+        description: 'Backup date YYYY-MM-DD (empty = latest available)'
+        type: string
+        default: ''
+      backup_protocol:
+        description: 'Backup source protocol'
+        type: choice
+        options:
+          - ftp
+          - sftp
+          - ftps
+        default: ftp
+      confirm_prod:
+        description: 'Required for manual real run (set YES)'
+        type: string
+        default: 'NO'
+
+jobs:
+  etl:
+    name: ETL Nightly (${{ github.event_name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BACKUP_PROTOCOL: ${{ github.event_name == 'workflow_dispatch' && inputs.backup_protocol || 'ftp' }}
+      BACKUP_REMOTE_DIR: '/var/lib/vz/dump'
+      BACKUP_FTP_REMOTE_DIR: '/public_html/.well-known/backup-jet'
+      BACKUP_FILENAME_PREFIX: 'nblgrafica_app-'
+      BACKUP_EXTENSION: '.sql'
+      BACKUP_LOCAL_DIR: './backups'
+      MYSQL_HOST: '127.0.0.1'
+      MYSQL_PORT: '3307'
+      MYSQL_USER: 'root'
+      MYSQL_PASSWORD: 'root'
+      MYSQL_DATABASE: 'legacy'
+      ETL_BATCH_SIZE: '200'
+      ETL_RETRIES: '6'
+      TRUNCATE_ENABLED: '1'
+      TRUNCATE_TABLES_MODE: 'exec_order'
+      TZ: 'America/Fortaleza'
+      DOCKER_COMPOSE_FILE: 'docker-compose.yml'
+      SQL_INPUT_DIR: './sql_input'
+      LOGS_DIR: './logs'
+      DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+      BACKUP_DATE_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.backup_date || '' }}
+      CONFIRM_PROD_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.confirm_prod || 'NO' }}
+
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: legacy
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Setup SSH key for SFTP
+        if: ${{ env.BACKUP_PROTOCOL == 'sftp' }}
+        env:
+          BACKUP_SSH_KEY: ${{ secrets.BACKUP_SSH_KEY }}
+          BACKUP_SFTP_HOST: ${{ secrets.BACKUP_SFTP_HOST }}
+          BACKUP_KNOWN_HOSTS: ${{ secrets.BACKUP_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "${BACKUP_SSH_KEY}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          if [ -n "${BACKUP_KNOWN_HOSTS}" ]; then
+            echo "${BACKUP_KNOWN_HOSTS}" >> ~/.ssh/known_hosts
+          else
+            ssh-keyscan -p 22 "${BACKUP_SFTP_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          fi
+
+      - name: Create required directories
+        run: mkdir -p backups logs sql_input
+
+      - name: Guard manual production run
+        if: ${{ github.event_name == 'workflow_dispatch' && env.DRY_RUN_INPUT != 'true' }}
+        run: |
+          if [ "${CONFIRM_PROD_INPUT}" != "YES" ]; then
+            echo "Manual real run blocked."
+            echo "Set workflow input confirm_prod=YES to proceed."
+            exit 1
+          fi
+
+      - name: Validate required env
+        env:
+          BACKUP_SFTP_HOST: ${{ secrets.BACKUP_SFTP_HOST }}
+          BACKUP_SFTP_USER: ${{ secrets.BACKUP_SFTP_USER }}
+          BACKUP_SSH_KEY_PATH: '~/.ssh/id_rsa'
+          BACKUP_FTP_HOST: ${{ secrets.BACKUP_FTP_HOST }}
+          BACKUP_FTP_USER: ${{ secrets.BACKUP_FTP_USER }}
+          BACKUP_FTP_PASSWORD: ${{ secrets.BACKUP_FTP_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          TRUNCATE_CONFIRM: ${{ env.DRY_RUN_INPUT == 'true' && 'NO' || 'YES' }}
+        run: |
+          if [ "${DRY_RUN_INPUT}" = "true" ]; then
+            python scripts/check_env.py --dry-run
+          else
+            python scripts/check_env.py
+          fi
+
+      - name: Run daily job
+        env:
+          BACKUP_SFTP_HOST: ${{ secrets.BACKUP_SFTP_HOST }}
+          BACKUP_SFTP_PORT: '22'
+          BACKUP_SFTP_USER: ${{ secrets.BACKUP_SFTP_USER }}
+          BACKUP_SSH_KEY_PATH: '~/.ssh/id_rsa'
+          BACKUP_FTP_HOST: ${{ secrets.BACKUP_FTP_HOST }}
+          BACKUP_FTP_PORT: '21'
+          BACKUP_FTP_USER: ${{ secrets.BACKUP_FTP_USER }}
+          BACKUP_FTP_PASSWORD: ${{ secrets.BACKUP_FTP_PASSWORD }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          ETL_VALIDATE_ONLY: ${{ env.DRY_RUN_INPUT == 'true' && '1' || '0' }}
+          TRUNCATE_CONFIRM: ${{ env.DRY_RUN_INPUT == 'true' && 'NO' || 'YES' }}
+        run: |
+          cmd=(python scripts/daily_job.py)
+          if [ "${DRY_RUN_INPUT}" = "true" ]; then
+            cmd+=(--dry-run)
+          fi
+          if [ "${BACKUP_DATE_INPUT}" != "" ]; then
+            cmd+=(--backup-date "${BACKUP_DATE_INPUT}")
+          fi
+          "${cmd[@]}"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: etl-logs-${{ github.run_id }}
+          path: |
+            logs/*.log
+            backups/manifest.json
+          retention-days: 14
+          if-no-files-found: warn

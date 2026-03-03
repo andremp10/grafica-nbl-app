@@ -1,48 +1,81 @@
-# Gráfica NBL Admin 🎨
+﻿# NBL ETL - MySQL to Supabase
 
-Sistema de gestão premium e Chat Inteligente para gráficas. Desenvolvido em **Streamlit**.
+ETL pipeline for Grafica NBL:
+- fetch daily SQL backup
+- import into local MySQL service (GitHub runner)
+- truncate Supabase target tables
+- load 30 tables via ETL
 
-## 🚀 Como Rodar (Local)
+## Current production source
+The valid SQL dumps are in FTP:
+- host: `162.241.203.52`
+- remote dir: `/public_html/.well-known/backup-jet`
+- filename pattern: `nblgrafica_app-YYYY-MM-DD.sql`
 
-1.  **Instale as dependências:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+## Local setup
+```bash
+pip install -r requirements.txt
+cp .env.example .env
+```
 
-2.  **Configure o Ambiente:**
-    *   Crie um arquivo `.env` na raiz.
-    *   Adicione sua URL do N8N:
-        ```bash
-        WEBHOOK_URL="https://webhook-pre.golfine.com.br/webhook/..."
-        ```
-        *(Compatibilidade: também aceitamos `VITE_WEBHOOK_URL`.)*
+Required real values in `.env`:
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_DB_URL`
+- `BACKUP_FTP_PASSWORD`
 
-3.  **Execute o App:**
-    ```bash
-    streamlit run streamlit_app.py
-    ```
+## Run manually
+Dry-run:
+```bash
+python scripts/daily_job.py --dry-run
+```
 
----
+Real run:
+```bash
+TRUNCATE_CONFIRM=YES python scripts/daily_job.py --backup-date 2026-03-02
+```
 
-## ☁️ Como Fazer Deploy (Streamlit Cloud)
+## GitHub Actions
+Workflow: `.github/workflows/nightly_etl.yml`
 
-O jeito mais fácil, gratuito e rápido de colocar este app no ar é usando a **Streamlit Cloud**.
+Triggers:
+- schedule: daily at `04:00 UTC`
+- manual: `workflow_dispatch`
 
-1.  Acesse: [share.streamlit.io](https://share.streamlit.io/)
-2.  Faça login com seu GitHub.
-3.  Clique em **"New App"**.
-4.  Selecione este repositório.
-5.  **Main file path:** `streamlit_app.py`
-6.  **Advanced Settings (Secrets):**
-    *   Configure em formato TOML (ex.: `WEBHOOK_URL = "..."`).
-7.  Clique em **Deploy!** 🚀
+Manual run inputs:
+- `dry_run` (`true` or `false`)
+- `backup_date` (`YYYY-MM-DD`)
+- `backup_protocol` (`ftp`, `sftp`, `ftps`)
+- `confirm_prod` (`YES` required only when `dry_run=false`)
 
-O App ficará online em minutos com HTTPS automático.
+Production safety:
+- manual real run is blocked unless `confirm_prod=YES`
+- if `dry_run=true`, workflow validates and runs ETL in validation mode only
 
----
+### One-shot production run (yesterday)
+Use these exact inputs in GitHub UI:
+- `dry_run=false`
+- `backup_date=2026-03-02`
+- `backup_protocol=ftp`
+- `confirm_prod=YES`
 
-## 📂 Estrutura
+## Required GitHub Secrets
+- `BACKUP_SSH_KEY` (used only when protocol is sftp)
+- `BACKUP_SFTP_HOST`
+- `BACKUP_SFTP_USER`
+- `BACKUP_FTP_HOST`
+- `BACKUP_FTP_USER`
+- `BACKUP_FTP_PASSWORD`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_DB_URL`
 
-*   `streamlit_app.py`: Interface principal e lógica.
-*   `.streamlit/config.toml`: Configuração do Tema Dark Premium.
-*   `services/`: Integração com N8N.
+See details in `docs/github-secrets.md`.
+
+## Artifacts and logs
+After each run, GitHub uploads:
+- `logs/*.log`
+- `backups/manifest.json`
+
+Artifact name pattern:
+- `etl-logs-<run_id>`

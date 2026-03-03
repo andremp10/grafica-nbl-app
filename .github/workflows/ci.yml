@@ -25,9 +25,12 @@ jobs:
           pip install -r requirements.txt
 
       - name: Compile (smoke)
-        run: python -m compileall -q .
+        run: python -m compileall -q etl/ scripts/ tests/
 
       - name: Lint (ruff)
         run: |
           pip install ruff
-          ruff check .
+          ruff check etl/ scripts/ tests/
+
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short

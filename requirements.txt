@@ -1,8 +1,5 @@
-streamlit
-requests
 python-dotenv
-pandas
-plotly
-sqlalchemy
 mysql-connector-python
 supabase
+psycopg2-binary
+paramiko
