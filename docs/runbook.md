@@ -1,80 +1,68 @@
-﻿# NBL ETL - Runbook
+﻿# NBL ETL - Runbook Operacional
 
-Operational guide for daily ETL:
-1. fetch SQL backup
-2. import into MySQL
-3. truncate Supabase
-4. run ETL load
+## Objetivo
+Operar a carga automática noturna MySQL -> Supabase com validação pós-ETL e artifacts para auditoria.
 
-## Production backup source
-Current valid source is FTP:
-- host: `162.241.203.52`
-- remote dir: `/public_html/.well-known/backup-jet`
-- file format: `.sql`
-- naming: `nblgrafica_app-YYYY-MM-DD.sql`
+## Janela de execução
+- Workflow: `Nightly ETL`
+- Trigger: `schedule`
+- Cron UTC: `0 4 * * *`
+- Fortaleza (UTC-3): **01:00 diariamente**
+- O agendamento roda no branch padrão (`main`).
 
-## Preconditions
-- Python 3.11
-- Docker running
-- `.env` configured
-- GitHub secrets configured
+## Fluxo executado
+1. `check_env` em modo produção (fail-fast)
+2. download do backup
+3. import do dump no MySQL do runner
+4. truncate no Supabase
+5. ETL de carga
+6. verificação pós-carga no Supabase
+7. upload de artifacts
 
-## .env bootstrap
-```bash
-cp .env.example .env
-```
+## Fail-fast obrigatório
+`check_env.py --mode production` valida antes do job:
+- `BACKUP_PROTOCOL`
+- credenciais de backup (FTP/SFTP conforme protocolo)
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL`
+- gate destrutivo: `TRUNCATE_ENABLED=1` exige `TRUNCATE_CONFIRM=YES`
 
-Minimum required values:
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_DB_URL`
-- `BACKUP_FTP_PASSWORD`
-- `TRUNCATE_CONFIRM=YES` (for real run)
+## Verificação pós-carga
+`scripts/verify_supabase_load.py` (somente SELECT):
+- `COUNT(*)` mínimo em `is_pedidos` e `is_clientes`
+- recência de dados (preferência: `updated_at`, fallback: `created_at`/`data`)
+- fallback baseline de rowcount quando não há coluna temporal
 
-## Manual commands
-Validate env:
-```bash
-python scripts/check_env.py
-```
+Configurações úteis:
+- `VERIFY_TABLES`
+- `VERIFY_MIN_ROWS`
+- `VERIFY_RECENCY_TABLE`
+- `VERIFY_RECENCY_COLUMNS`
+- `VERIFY_MAX_AGE_HOURS`
+- `VERIFY_BASELINE_PATH`
 
-Dry-run:
-```bash
-python scripts/daily_job.py --dry-run
-```
+## Confiabilidade
+- `concurrency`: evita sobreposição de runs noturnos
+- `timeout-minutes`: 90
+- retry simples do `daily_job`: até 2 tentativas com backoff
+- em falha de fetch/import, truncate e ETL não são executados
 
-Real run (specific date):
-```bash
-TRUNCATE_CONFIRM=YES python scripts/daily_job.py --backup-date 2026-03-02
-```
-
-## GitHub Actions run
-Workflow: `Nightly ETL`
-
-Manual trigger inputs:
-- `dry_run`
-- `backup_date`
-- `backup_protocol`
-- `confirm_prod`
-
-Example production run:
-- `dry_run=false`
-- `backup_date=2026-03-02`
-- `backup_protocol=ftp`
-- `confirm_prod=YES`
-
-## Artifacts
-Each run uploads:
+## Artifacts e observabilidade
+Sempre publicados (`if: always()`):
 - `logs/*.log`
 - `backups/manifest.json`
+- `backups/verify_baseline.json`
 
-Artifact name:
-- `etl-logs-<run_id>`
+Marcos esperados no log:
+- `[START]/[OK] 0. Validate env`
+- `[START]/[OK] 1. Fetch backup`
+- `[START]/[OK] 2. Import dump MySQL`
+- `[START]/[OK] 3. Truncate Supabase`
+- `[START]/[OK] 4. ETL MySQL -> Supabase`
+- `[VERIFY OK] ...`
 
-## Optional SFTP key config
-Only needed when `BACKUP_PROTOCOL=sftp`.
-
-```bash
-ssh-keygen -t ed25519 -C "github-actions-nbl-etl" -f ./nbl_etl_ed25519
-ssh-copy-id -i ./nbl_etl_ed25519.pub root@49.12.151.235
-ssh-keyscan -p 22 49.12.151.235
-```
+## Troubleshooting
+- `check_env` falhou: revisar secrets obrigatórios.
+- `Fetch backup` falhou: host/usuário/senha/protocolo/caminho remoto.
+- `Import dump` falhou: dump inválido ou indisponibilidade do MySQL service.
+- `Truncate` falhou: `TRUNCATE_CONFIRM` não está `YES` ou URL do Postgres inválida.
+- `Verify Supabase load` falhou: carga vazia, dados antigos ou baseline inconsistente.

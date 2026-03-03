@@ -1,11 +1,5 @@
 ﻿#!/usr/bin/env python3
-"""
-check_env.py - fail-fast environment validator.
-
-Security rule:
-- Never print secret values.
-- Print only variable names and validation messages.
-"""
+"""Fail-fast validator for ETL environment variables."""
 
 from __future__ import annotations
 
@@ -18,7 +12,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_ALWAYS_REQUIRED: list[str] = [
+_ALLOWED_PROTOCOLS = {"sftp", "ftp", "ftps"}
+
+_ALWAYS_REQUIRED = [
     "SUPABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY",
     "SUPABASE_DB_URL",
@@ -28,29 +24,28 @@ _ALWAYS_REQUIRED: list[str] = [
     "MYSQL_PASSWORD",
     "MYSQL_DATABASE",
     "BACKUP_REMOTE_DIR",
+    "BACKUP_PROTOCOL",
 ]
 
-_REAL_REQUIRED_BASE: list[str] = [
-    "BACKUP_FTP_HOST",
-    "BACKUP_FTP_USER",
-    "BACKUP_FTP_PASSWORD",
-]
+
+def _get(name: str) -> str:
+    return (os.getenv(name, "") or "").strip()
 
 
 def _protocol() -> str:
-    return (os.getenv("BACKUP_PROTOCOL", "sftp") or "sftp").strip().lower()
+    return _get("BACKUP_PROTOCOL").lower()
 
 
 def _check_format(errors: list[str]) -> None:
-    url = os.getenv("SUPABASE_URL", "")
-    if url and not url.startswith("https://"):
+    supabase_url = _get("SUPABASE_URL")
+    if supabase_url and not supabase_url.startswith("https://"):
         errors.append("SUPABASE_URL: must start with 'https://'.")
 
-    db_url = os.getenv("SUPABASE_DB_URL", "")
+    db_url = _get("SUPABASE_DB_URL")
     if db_url and not db_url.startswith("postgresql://"):
         errors.append("SUPABASE_DB_URL: must start with 'postgresql://'.")
 
-    port = os.getenv("MYSQL_PORT", "")
+    port = _get("MYSQL_PORT")
     if port:
         try:
             int(port)
@@ -58,29 +53,30 @@ def _check_format(errors: list[str]) -> None:
             errors.append("MYSQL_PORT: must be an integer.")
 
     proto = _protocol()
-    if proto not in {"sftp", "ftp", "ftps"}:
+    if proto and proto not in _ALLOWED_PROTOCOLS:
         errors.append("BACKUP_PROTOCOL: must be one of {sftp, ftp, ftps}.")
 
 
-def _check_sftp_auth(errors: list[str], dry_run: bool) -> None:
+def _check_sftp_auth(errors: list[str], warn_only: bool) -> None:
     if _protocol() != "sftp":
         return
 
-    key_path_raw = os.getenv("BACKUP_SSH_KEY_PATH", "").strip()
-    key_b64 = os.getenv("BACKUP_SSH_KEY_B64", "").strip()
-    sftp_password = os.getenv("BACKUP_SFTP_PASSWORD", "").strip()
+    key_path = _get("BACKUP_SSH_KEY_PATH")
+    key_b64 = _get("BACKUP_SSH_KEY_B64")
+    key_inline = _get("BACKUP_SSH_KEY")
+    password = _get("BACKUP_SFTP_PASSWORD")
 
-    if sftp_password or key_b64:
+    if key_b64 or key_inline or password:
         return
 
-    if key_path_raw:
-        key_path = Path(key_path_raw).expanduser()
-        if not key_path.exists():
+    if key_path:
+        expanded = Path(key_path).expanduser()
+        if not expanded.exists():
             msg = (
-                f"BACKUP_SSH_KEY_PATH: file not found at '{key_path}'. "
-                "Set BACKUP_SSH_KEY_B64 or BACKUP_SFTP_PASSWORD as fallback."
+                "BACKUP_SSH_KEY_PATH: file not found. "
+                "Provide BACKUP_SSH_KEY/BACKUP_SSH_KEY_B64/BACKUP_SFTP_PASSWORD as fallback."
             )
-            if dry_run:
+            if warn_only:
                 print(f"  [WARN] {msg}")
             else:
                 errors.append(msg)
@@ -88,67 +84,81 @@ def _check_sftp_auth(errors: list[str], dry_run: bool) -> None:
 
     msg = (
         "SFTP auth missing. Configure one of: "
-        "BACKUP_SSH_KEY_PATH, BACKUP_SSH_KEY_B64, BACKUP_SFTP_PASSWORD."
+        "BACKUP_SSH_KEY_PATH, BACKUP_SSH_KEY, BACKUP_SSH_KEY_B64, BACKUP_SFTP_PASSWORD."
     )
-    if dry_run:
+    if warn_only:
         print(f"  [WARN] {msg}")
     else:
         errors.append(msg)
 
 
-def _check_truncate_gate(errors: list[str], dry_run: bool) -> None:
-    if dry_run:
+def _check_protocol_requirements(errors: list[str], mode: str) -> None:
+    proto = _protocol()
+    if not proto:
         return
-    enabled = os.getenv("TRUNCATE_ENABLED", "0") == "1"
-    confirm = os.getenv("TRUNCATE_CONFIRM", "NO")
-    if enabled and confirm != "YES":
+
+    if proto in {"ftp", "ftps"}:
+        for var in ["BACKUP_FTP_HOST", "BACKUP_FTP_USER", "BACKUP_FTP_PASSWORD"]:
+            if not _get(var):
+                errors.append(f"{var}: missing or empty")
+
+    if proto == "sftp":
+        for var in ["BACKUP_SFTP_HOST", "BACKUP_SFTP_USER"]:
+            if not _get(var):
+                errors.append(f"{var}: missing or empty")
+        _check_sftp_auth(errors, warn_only=(mode == "dry-run"))
+
+
+def _check_truncate_gate(errors: list[str], mode: str) -> None:
+    if mode != "production":
+        return
+    truncate_enabled = _get("TRUNCATE_ENABLED") == "1"
+    truncate_confirm = _get("TRUNCATE_CONFIRM")
+    if truncate_enabled and truncate_confirm != "YES":
         errors.append(
             "TRUNCATE_ENABLED=1 but TRUNCATE_CONFIRM is not 'YES'. "
-            "Set TRUNCATE_CONFIRM=YES to allow truncate."
+            "Set TRUNCATE_CONFIRM=YES in secrets/variables."
         )
 
 
-def check_env(dry_run: bool = False) -> None:
+def check_env(mode: str = "production") -> None:
     errors: list[str] = []
 
     for var in _ALWAYS_REQUIRED:
-        if not (os.getenv(var, "") or "").strip():
+        if not _get(var):
             errors.append(f"{var}: missing or empty")
 
-    if not dry_run:
-        for var in _REAL_REQUIRED_BASE:
-            if not (os.getenv(var, "") or "").strip():
-                errors.append(f"{var}: missing or empty")
-
-        if _protocol() == "sftp":
-            for var in ["BACKUP_SFTP_HOST", "BACKUP_SFTP_USER"]:
-                if not (os.getenv(var, "") or "").strip():
-                    errors.append(f"{var}: missing or empty")
-
     _check_format(errors)
-    _check_sftp_auth(errors, dry_run=dry_run)
-    _check_truncate_gate(errors, dry_run=dry_run)
+    _check_protocol_requirements(errors, mode=mode)
+    _check_truncate_gate(errors, mode=mode)
 
-    mode_label = "dry-run" if dry_run else "real"
     if errors:
-        print(f"\n[check_env] FAIL ({mode_label}) - {len(errors)} issue(s):\n")
+        print(f"\n[check_env] FAIL ({mode}) - {len(errors)} issue(s):\n")
         for err in errors:
             print(f"  [FAIL] {err}")
         print()
         sys.exit(1)
 
-    print(f"[check_env] OK ({mode_label}) - required environment is valid.")
+    print(f"[check_env] OK ({mode}) - required environment is valid.")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Validate env vars before ETL job.")
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Less strict mode for validation-only runs.",
+        "--mode",
+        choices=["production", "dry-run"],
+        default="production",
+        help="Validation mode.",
     )
+    # Backward compatibility with previous flag.
+    parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    check_env(dry_run=args.dry_run)
+
+    if args.dry_run:
+        check_env(mode="dry-run")
+        return
+
+    check_env(mode=args.mode)
 
 
 if __name__ == "__main__":

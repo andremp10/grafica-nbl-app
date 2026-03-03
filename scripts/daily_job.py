@@ -1,33 +1,21 @@
-#!/usr/bin/env python3
-"""
-daily_job.py — Orquestrador do job ETL diário.
+﻿#!/usr/bin/env python3
+"""Daily orchestrator for MySQL -> Supabase ETL."""
 
-Fluxo (fail-fast):
-  1. Baixar backup (SFTP → FTP fallback)
-  2. Validar backup (tamanho + magic bytes)
-  3. Importar no MySQL Docker
-  4. Truncar Supabase  ← só executa se passos 1-3 OK
-  5. Rodar ETL         ← só executa se passo 4 OK
-  6. Derrubar container MySQL
-  7. Salvar resumo em logs/
-
-Uso:
-  python scripts/daily_job.py
-  python scripts/daily_job.py --dry-run        # valida apenas (sem truncar/carregar)
-  python scripts/daily_job.py --skip-fetch     # pula fetch (reutiliza backup existente)
-  python scripts/daily_job.py --backup-date 2025-01-15
-"""
+from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import subprocess
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from dotenv import load_dotenv
+
 from scripts.check_env import check_env
 from scripts.fetch_backup import fetch_backup
 from scripts.import_dump import import_dump
@@ -35,203 +23,221 @@ from scripts.truncate_supabase import truncate_supabase
 
 load_dotenv()
 
-_ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent
+COMPOSE_FILE = os.getenv("DOCKER_COMPOSE_FILE", "docker-compose.yml")
+LOGS_DIR = Path(os.getenv("LOGS_DIR", "./logs"))
+BACKUPS_DIR = Path(os.getenv("BACKUP_LOCAL_DIR", "./backups"))
+MANIFEST_PATH = BACKUPS_DIR / "manifest.json"
 
-# ─────────────────────────────────────────────────────────────
-# CONFIG
-# ─────────────────────────────────────────────────────────────
-COMPOSE_FILE    = os.getenv("DOCKER_COMPOSE_FILE", "docker-compose.yml")
-LOGS_DIR        = Path(os.getenv("LOGS_DIR", "./logs"))
-TRUNCATE_ENABLED = os.getenv("TRUNCATE_ENABLED", "0") == "1"
-ETL_VALIDATE_ONLY = os.getenv("ETL_VALIDATE_ONLY", "0") == "1"
-
-# ─────────────────────────────────────────────────────────────
-# LOGGING
-# ─────────────────────────────────────────────────────────────
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
-_log_file = LOGS_DIR / f"daily_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
+BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
 
-_handlers = [
-    logging.StreamHandler(sys.stdout),
-    logging.FileHandler(_log_file, encoding="utf-8"),
-]
+log_file = LOGS_DIR / f"daily_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-7s  %(message)s",
     datefmt="%H:%M:%S",
-    handlers=_handlers,
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(log_file, encoding="utf-8"),
+    ],
 )
 log = logging.getLogger("daily_job")
 
 
-# ─────────────────────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────────────────────
 class StepTimer:
     def __init__(self, name: str):
         self.name = name
-        self._start: float = 0.0
-        self.elapsed: float = 0.0
+        self.start = 0.0
+        self.elapsed = 0.0
 
-    def __enter__(self):
-        log.info("▶ Iniciando: %s", self.name)
-        self._start = time.monotonic()
+    def __enter__(self) -> "StepTimer":
+        self.start = time.monotonic()
+        log.info("[START] %s", self.name)
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.elapsed = time.monotonic() - self._start
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        self.elapsed = time.monotonic() - self.start
         if exc_type:
-            log.error("✗ Falhou: %s (%.1fs)", self.name, self.elapsed)
+            log.error("[FAIL] %s (%.1fs)", self.name, self.elapsed)
         else:
-            log.info("✔ Concluído: %s (%.1fs)", self.name, self.elapsed)
-        return False  # re-raise exceptions
+            log.info("[OK] %s (%.1fs)", self.name, self.elapsed)
+        return False
 
 
-def _docker_compose_down_mysql() -> None:
-    """Para o container MySQL (não remove volumes)."""
-    log.info("Parando container MySQL...")
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _persist_manifest(manifest: dict) -> None:
+    MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _mark_step(manifest: dict, step: str, status: str, details: dict | None = None) -> None:
+    payload = {
+        "status": status,
+        "at": _utc_now(),
+    }
+    if details:
+        payload.update(details)
+    manifest.setdefault("steps", {})[step] = payload
+    _persist_manifest(manifest)
+
+
+def _run_etl(dry_run: bool) -> None:
+    etl_script = ROOT / "etl" / "run.py"
+    env = os.environ.copy()
+    if dry_run:
+        env["ETL_VALIDATE_ONLY"] = "1"
+
+    result = subprocess.run([sys.executable, str(etl_script)], env=env, capture_output=False)
+    if result.returncode != 0:
+        raise RuntimeError(f"ETL failed with exit code {result.returncode}")
+
+
+def _docker_compose_stop_mysql() -> None:
     try:
         subprocess.run(
             ["docker", "compose", "-f", COMPOSE_FILE, "stop", "mysql"],
             check=True,
             capture_output=True,
+            text=True,
         )
-        log.info("Container MySQL parado.")
+        log.info("[OK] mysql service stopped")
     except subprocess.CalledProcessError as exc:
-        log.warning("Não foi possível parar o container MySQL: %s", exc.stderr)
-
-
-def _run_etl(dry_run: bool = False) -> None:
-    """Executa etl/run.py como subprocess para isolar imports e env vars."""
-    etl_script = _ROOT / "etl" / "run.py"
-    env = os.environ.copy()
-    if dry_run:
-        env["ETL_VALIDATE_ONLY"] = "1"
-
-    log.info("Executando ETL: %s", etl_script)
-    result = subprocess.run(
-        [sys.executable, str(etl_script)],
-        env=env,
-        capture_output=False,  # herda stdout/stderr para aparecer no log
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"ETL falhou com código de saída {result.returncode}.")
+        log.warning("[WARN] could not stop mysql service: %s", exc.stderr)
 
 
 def _write_summary(steps: list[dict]) -> None:
-    """Escreve resumo do job no arquivo de log."""
     summary_path = LOGS_DIR / f"summary_{datetime.now().strftime('%Y%m%d_%H%M')}.log"
-    total = sum(s["elapsed"] for s in steps)
+    total = sum(step["elapsed"] for step in steps)
     lines = [
         "=" * 60,
-        f"NBL ETL Daily Job — {datetime.now().isoformat(timespec='seconds')}",
+        f"NBL ETL Daily Job - {datetime.now().isoformat(timespec='seconds')}",
         "=" * 60,
     ]
-    for s in steps:
-        status = "OK  " if s["ok"] else "FAIL"
-        lines.append(f"  [{status}] {s['name']:<35} {s['elapsed']:6.1f}s")
-    lines += [
-        "-" * 60,
-        f"  Total: {total:.1f}s",
-        "=" * 60,
-    ]
+    for step in steps:
+        status = "OK" if step["ok"] else "FAIL"
+        lines.append(f"[{status:<4}] {step['name']:<34} {step['elapsed']:6.1f}s")
+    lines += ["-" * 60, f"Total: {total:.1f}s", "=" * 60]
+
     text = "\n".join(lines)
     log.info("\n%s", text)
     summary_path.write_text(text + "\n", encoding="utf-8")
-    log.info("Resumo salvo em: %s", summary_path)
+    log.info("Summary saved at %s", summary_path)
 
 
-# ─────────────────────────────────────────────────────────────
-# JOB PRINCIPAL
-# ─────────────────────────────────────────────────────────────
+def _run_step(
+    name: str,
+    manifest: dict,
+    steps: list[dict],
+    func: Callable[[], None],
+) -> None:
+    with StepTimer(name) as timer:
+        func()
+    steps.append({"name": name, "ok": True, "elapsed": timer.elapsed})
+    _mark_step(manifest, name, "ok", {"elapsed_seconds": round(timer.elapsed, 2)})
+
+
 def run_daily_job(
     dry_run: bool = False,
     skip_fetch: bool = False,
     backup_path_override: Path | None = None,
     backup_date: date | None = None,
 ) -> None:
-    # ── Passo 0: Fail-fast env check ──────────────────────────
-    check_env(dry_run=dry_run)
+    manifest = {
+        "run_started_at": _utc_now(),
+        "mode": "dry-run" if dry_run else "production",
+        "status": "running",
+        "steps": {},
+        "backup": {},
+    }
+    _persist_manifest(manifest)
 
     steps: list[dict] = []
     backup_path: Path | None = backup_path_override
+    truncate_enabled = os.getenv("TRUNCATE_ENABLED", "0") == "1"
 
-    # ── Passo 1: Fetch backup ──────────────────────────────────
-    if not skip_fetch:
-        with StepTimer("1. Fetch backup") as t:
-            backup_path = fetch_backup(target_date=backup_date)
-        steps.append({"name": "1. Fetch backup", "ok": True, "elapsed": t.elapsed})
-    else:
-        log.info("skip-fetch ativado — usando backup: %s", backup_path)
-        steps.append({"name": "1. Fetch backup (skipped)", "ok": True, "elapsed": 0.0})
+    try:
+        _run_step(
+            "0. Validate env",
+            manifest,
+            steps,
+            lambda: check_env(mode="dry-run" if dry_run else "production"),
+        )
 
-    if backup_path is None:
-        raise RuntimeError("Nenhum backup disponível para importar.")
+        if not skip_fetch:
+            def _fetch() -> None:
+                nonlocal backup_path
+                backup_path = fetch_backup(target_date=backup_date)
 
-    # ── Passo 2: Import dump ──────────────────────────────────
-    if not dry_run:
-        with StepTimer("2. Importar dump MySQL") as t:
-            import_dump(backup_path)
-        steps.append({"name": "2. Importar dump MySQL", "ok": True, "elapsed": t.elapsed})
-    else:
-        log.info("dry-run: pulando importação MySQL.")
-        steps.append({"name": "2. Importar dump MySQL (dry-run)", "ok": True, "elapsed": 0.0})
+            _run_step("1. Fetch backup", manifest, steps, _fetch)
+        else:
+            log.info("[OK] fetch skipped - using %s", backup_path)
+            steps.append({"name": "1. Fetch backup (skipped)", "ok": True, "elapsed": 0.0})
+            _mark_step(manifest, "1. Fetch backup", "skipped")
 
-    # ── Passo 3: Truncate Supabase ────────────────────────────
-    if TRUNCATE_ENABLED and not dry_run:
-        with StepTimer("3. Truncar Supabase") as t:
-            truncate_supabase()
-        steps.append({"name": "3. Truncar Supabase", "ok": True, "elapsed": t.elapsed})
-    else:
-        reason = "dry-run" if dry_run else "TRUNCATE_ENABLED=0"
-        log.info("Truncagem pulada (%s).", reason)
-        steps.append({"name": "3. Truncar Supabase (skipped)", "ok": True, "elapsed": 0.0})
+        if backup_path is None:
+            raise RuntimeError("No backup file available")
+        if not backup_path.exists():
+            raise FileNotFoundError(f"Backup file not found: {backup_path}")
 
-    # ── Passo 4: ETL ──────────────────────────────────────────
-    with StepTimer("4. ETL MySQL → Supabase") as t:
-        _run_etl(dry_run=dry_run)
-    steps.append({"name": "4. ETL MySQL → Supabase", "ok": True, "elapsed": t.elapsed})
+        stat = backup_path.stat()
+        manifest["backup"] = {
+            "path": str(backup_path.resolve()),
+            "name": backup_path.name,
+            "size_bytes": stat.st_size,
+            "size_mb": round(stat.st_size / 1_048_576, 3),
+            "selected_for_date": backup_date.isoformat() if backup_date else "latest",
+            "recorded_at": _utc_now(),
+        }
+        _persist_manifest(manifest)
 
-    # ── Passo 5: Docker down ──────────────────────────────────
-    if not dry_run:
-        with StepTimer("5. Parar MySQL Docker") as t:
-            _docker_compose_down_mysql()
-        steps.append({"name": "5. Parar MySQL Docker", "ok": True, "elapsed": t.elapsed})
+        if dry_run:
+            log.info("[OK] dry-run: skipping MySQL import")
+            steps.append({"name": "2. Import dump MySQL (dry-run)", "ok": True, "elapsed": 0.0})
+            _mark_step(manifest, "2. Import dump MySQL", "skipped")
+        else:
+            _run_step("2. Import dump MySQL", manifest, steps, lambda: import_dump(backup_path))
 
-    # ── Resumo ────────────────────────────────────────────────
-    _write_summary(steps)
+        if truncate_enabled and not dry_run:
+            _run_step("3. Truncate Supabase", manifest, steps, lambda: truncate_supabase())
+        else:
+            reason = "dry-run" if dry_run else "TRUNCATE_ENABLED=0"
+            log.info("[OK] truncate skipped (%s)", reason)
+            steps.append({"name": "3. Truncate Supabase (skipped)", "ok": True, "elapsed": 0.0})
+            _mark_step(manifest, "3. Truncate Supabase", "skipped", {"reason": reason})
+
+        _run_step("4. ETL MySQL -> Supabase", manifest, steps, lambda: _run_etl(dry_run=dry_run))
+
+        if not dry_run:
+            _run_step("5. Stop MySQL Docker", manifest, steps, _docker_compose_stop_mysql)
+
+        manifest["status"] = "success"
+        manifest["run_finished_at"] = _utc_now()
+        _persist_manifest(manifest)
+
+    except Exception as exc:
+        manifest["status"] = "failed"
+        manifest["error"] = str(exc)
+        manifest["run_finished_at"] = _utc_now()
+        _persist_manifest(manifest)
+        raise
+
+    finally:
+        _write_summary(steps)
 
 
-# ─────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Orquestrador do job ETL diário.")
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Valida apenas (sem truncar/carregar). Implica ETL_VALIDATE_ONLY=1.",
-    )
-    parser.add_argument(
-        "--skip-fetch",
-        action="store_true",
-        help="Não baixa novo backup; reutiliza arquivo existente.",
-    )
-    parser.add_argument(
-        "--backup-file",
-        metavar="PATH",
-        help="Usar este arquivo de backup (implica --skip-fetch).",
-    )
-    parser.add_argument(
-        "--backup-date",
-        metavar="YYYY-MM-DD",
-        help="Data do backup a baixar (default: hoje).",
-    )
+    parser = argparse.ArgumentParser(description="Daily ETL orchestrator")
+    parser.add_argument("--dry-run", action="store_true", help="Run validation-only mode")
+    parser.add_argument("--skip-fetch", action="store_true", help="Reuse existing backup file")
+    parser.add_argument("--backup-file", metavar="PATH", help="Use specific backup file")
+    parser.add_argument("--backup-date", metavar="YYYY-MM-DD", help="Target backup date")
     args = parser.parse_args()
 
     backup_path_override: Path | None = None
     skip_fetch = args.skip_fetch
-
     if args.backup_file:
         backup_path_override = Path(args.backup_file).resolve()
         skip_fetch = True
@@ -243,11 +249,7 @@ def main() -> None:
     if args.dry_run:
         os.environ["ETL_VALIDATE_ONLY"] = "1"
 
-    log.info(
-        "=== NBL ETL Daily Job | %s | dry_run=%s ===",
-        datetime.now().isoformat(timespec="seconds"),
-        args.dry_run,
-    )
+    log.info("=== NBL ETL Daily Job | %s | dry_run=%s ===", datetime.now().isoformat(timespec="seconds"), args.dry_run)
 
     try:
         run_daily_job(
@@ -256,9 +258,9 @@ def main() -> None:
             backup_path_override=backup_path_override,
             backup_date=backup_date,
         )
-        log.info("=== Job concluído com SUCESSO ===")
+        log.info("=== Job completed successfully ===")
     except Exception as exc:
-        log.error("=== Job FALHOU: %s ===", exc)
+        log.error("=== Job failed: %s ===", exc)
         sys.exit(1)
 
 
