@@ -5,15 +5,9 @@ Testa _select_best() com listagens mockadas de SFTP/FTP,
 sem realizar conexões reais.
 """
 
-import sys
 from datetime import date, datetime
-from pathlib import Path
 
 import pytest
-
-# Adiciona root ao path para importar scripts/
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
 
 from scripts.fetch_backup import _select_best, DATE_PATTERN, PREFIX, EXT
 

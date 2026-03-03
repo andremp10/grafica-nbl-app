@@ -28,17 +28,14 @@ from datetime import date, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
+from scripts.check_env import check_env
+from scripts.fetch_backup import fetch_backup
+from scripts.import_dump import import_dump
+from scripts.truncate_supabase import truncate_supabase
 
 load_dotenv()
 
-# Ajusta path para importar módulos locais
 _ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_ROOT))
-
-from scripts.check_env import check_env
-from scripts.fetch_backup import fetch_backup
-from scripts.import_dump import import_dump, _wait_for_mysql
-from scripts.truncate_supabase import truncate_supabase
 
 # ─────────────────────────────────────────────────────────────
 # CONFIG
