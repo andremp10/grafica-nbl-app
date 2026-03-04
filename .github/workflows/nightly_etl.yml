@@ -2,12 +2,13 @@
 
 on:
   schedule:
-    # 01:00 Fortaleza (UTC-3) = 04:00 UTC
-    - cron: '0 4 * * *'
+    # TEMP diagnostic window: every 15 min for forensic evidence and rapid fix validation.
+    # Revert to '0 4 * * *' before closing production rollout.
+    - cron: '*/15 * * * *'
 
 concurrency:
   group: nightly-etl-main
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   etl:
