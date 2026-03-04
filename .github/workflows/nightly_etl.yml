@@ -1,6 +1,9 @@
 ﻿name: Nightly ETL
 
 on:
+  push:
+    branches:
+      - main
   schedule:
     # TEMP validation window: run every 5 minutes for immediate production verification.
     # Revert to '0 4 * * *' after validation.
