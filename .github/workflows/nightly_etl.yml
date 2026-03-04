@@ -2,12 +2,13 @@
 
 on:
   schedule:
-    # 01:00 Fortaleza (UTC-3) = 04:00 UTC
-    - cron: '0 4 * * *'
+    # TEMP validation window: run every 5 minutes for immediate production verification.
+    # Revert to '0 4 * * *' after validation.
+    - cron: '*/5 * * * *'
 
 concurrency:
   group: nightly-etl-main
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   etl:
