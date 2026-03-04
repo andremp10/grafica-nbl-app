@@ -16,6 +16,12 @@ from typing import Callable
 
 from dotenv import load_dotenv
 
+# Ensure repository root is on sys.path when invoked as:
+#   python scripts/daily_job.py
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from scripts.check_env import check_env
 from scripts.fetch_backup import fetch_backup
 from scripts.import_dump import import_dump
@@ -23,7 +29,7 @@ from scripts.truncate_supabase import truncate_supabase
 
 load_dotenv()
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = PROJECT_ROOT
 COMPOSE_FILE = os.getenv("DOCKER_COMPOSE_FILE", "docker-compose.yml")
 LOGS_DIR = Path(os.getenv("LOGS_DIR", "./logs"))
 BACKUPS_DIR = Path(os.getenv("BACKUP_LOCAL_DIR", "./backups"))
