@@ -81,6 +81,32 @@ def _max_age_hours(cur, table: str, column: str) -> float | None:
     return float(row[0])
 
 
+def _parse_iso_datetime(raw: str) -> datetime:
+    text = raw.strip()
+    if not text:
+        raise ValueError("VERIFY_MIN_DATE: empty value")
+    if len(text) == 10:
+        text = f"{text}T00:00:00+00:00"
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError("VERIFY_MIN_DATE: invalid ISO date/datetime") from exc
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _count_rows_after(cur, table: str, column: str, min_dt: datetime) -> int:
+    cur.execute(
+        f'SELECT COUNT(*) FROM "{table}" WHERE "{column}" > %s',
+        (min_dt,),
+    )
+    row = cur.fetchone()
+    return int(row[0])
+
+
 def _load_baseline(path: Path) -> dict:
     if not path.exists():
         return {}
@@ -110,10 +136,20 @@ def verify_supabase_load() -> None:
         for c in os.getenv("VERIFY_RECENCY_COLUMNS", "updated_at,created_at,data").split(",")
         if c.strip()
     ]
+    min_date_raw = (os.getenv("VERIFY_MIN_DATE", "") or "").strip()
+    min_date_table = (os.getenv("VERIFY_MIN_DATE_TABLE", recency_table) or recency_table).strip()
+    min_date_candidates = [
+        c.strip()
+        for c in os.getenv("VERIFY_MIN_DATE_COLUMNS", ",".join(recency_candidates)).split(",")
+        if c.strip()
+    ]
+    min_date_min_rows = int(os.getenv("VERIFY_MIN_DATE_MIN_ROWS", "1"))
     baseline_path = Path(os.getenv("VERIFY_BASELINE_PATH", "./backups/verify_baseline.json"))
 
     if recency_table not in tables:
         raise ValueError("VERIFY_RECENCY_TABLE must be present in VERIFY_TABLES")
+    if min_date_raw and min_date_table not in tables:
+        raise ValueError("VERIFY_MIN_DATE_TABLE must be present in VERIFY_TABLES")
 
     log.info("Verifying row counts in %s", ", ".join(tables))
 
@@ -161,6 +197,28 @@ def verify_supabase_load() -> None:
                     recency_table,
                     previous,
                     current,
+                )
+
+            if min_date_raw:
+                min_dt = _parse_iso_datetime(min_date_raw)
+                min_col = _find_recency_column(cur, min_date_table, min_date_candidates)
+                if not min_col:
+                    raise RuntimeError(
+                        "verification failed: no suitable date column found for VERIFY_MIN_DATE "
+                        f"in table '{min_date_table}'"
+                    )
+                rows_after = _count_rows_after(cur, min_date_table, min_col, min_dt)
+                if rows_after < min_date_min_rows:
+                    raise RuntimeError(
+                        "verification failed: expected rows after VERIFY_MIN_DATE "
+                        f"({min_date_raw}) in '{min_date_table}.{min_col}', got {rows_after}"
+                    )
+                log.info(
+                    "[VERIFY OK] min-date table=%s column=%s threshold=%s rows=%d",
+                    min_date_table,
+                    min_col,
+                    min_date_raw,
+                    rows_after,
                 )
 
     _save_baseline(baseline_path, counts)

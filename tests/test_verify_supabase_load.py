@@ -101,3 +101,36 @@ def test_verify_fallback_to_baseline_when_no_recency_column(tmp_path: Path):
     with patch.dict(os.environ, env, clear=False):
         with patch("scripts.verify_supabase_load.psycopg2.connect", return_value=conn):
             verify_supabase_load()
+
+
+def test_verify_success_with_min_date_threshold(tmp_path: Path):
+    env = _base_env(tmp_path)
+    env["VERIFY_MIN_DATE"] = "2026-01-25"
+    env["VERIFY_MIN_DATE_TABLE"] = "is_pedidos"
+    env["VERIFY_MIN_DATE_COLUMNS"] = "created_at,updated_at"
+    env["VERIFY_MIN_DATE_MIN_ROWS"] = "1"
+
+    # counts, has(updated_at)=None, has(created_at)=1, max_age, has(created_at)=1, rows_after
+    cursor = CursorStub([(10,), (5,), None, (1,), (2.0,), (1,), (123,)])
+    conn = ConnStub(cursor)
+
+    with patch.dict(os.environ, env, clear=False):
+        with patch("scripts.verify_supabase_load.psycopg2.connect", return_value=conn):
+            verify_supabase_load()
+
+
+def test_verify_fails_when_no_rows_after_min_date(tmp_path: Path):
+    env = _base_env(tmp_path)
+    env["VERIFY_MIN_DATE"] = "2026-01-25"
+    env["VERIFY_MIN_DATE_TABLE"] = "is_pedidos"
+    env["VERIFY_MIN_DATE_COLUMNS"] = "created_at,updated_at"
+    env["VERIFY_MIN_DATE_MIN_ROWS"] = "1"
+
+    # counts, has(updated_at)=None, has(created_at)=1, max_age, has(created_at)=1, rows_after=0
+    cursor = CursorStub([(10,), (5,), None, (1,), (2.0,), (1,), (0,)])
+    conn = ConnStub(cursor)
+
+    with patch.dict(os.environ, env, clear=False):
+        with patch("scripts.verify_supabase_load.psycopg2.connect", return_value=conn):
+            with pytest.raises(RuntimeError, match="VERIFY_MIN_DATE"):
+                verify_supabase_load()

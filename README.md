@@ -10,12 +10,9 @@ Pipeline de produção para carga diária automática:
 ## Agendamento automático
 - Workflow: `.github/workflows/nightly_etl.yml`
 - Trigger: `schedule` apenas
-- Cron UTC (temporário / burn-in): `*/15 * * * *`
-- Cron UTC (final): `0 4 * * *`
-- Horário Fortaleza (UTC-3, final): **01:00 da madrugada, diariamente**
+- Cron UTC: `0 4 * * *`
+- Horário Fortaleza (UTC-3): **01:00 da madrugada, diariamente**
 - Execução ocorre no branch padrão (`main`) do repositório.
-
-Após **1 run bem-sucedida** (incluindo `Verify Supabase load`), reverta o cron para o valor final.
 
 ## Fonte de backup (produção)
 - FTP host: `162.241.203.52`
@@ -60,6 +57,7 @@ Logs mostram marcos claros:
 O script `scripts/verify_supabase_load.py` valida:
 - contagem mínima em tabelas-chave (`is_pedidos`, `is_clientes`)
 - recência por coluna temporal (`updated_at`, `created_at` ou `data`)
+- existência de pedidos após `2026-01-25` (fail se não houver)
 - fallback por baseline de rowcount quando não há coluna temporal
 
 Se qualquer check falhar, o workflow falha.
