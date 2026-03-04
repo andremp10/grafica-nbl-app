@@ -1,13 +1,9 @@
 ﻿name: Nightly ETL
 
 on:
-  push:
-    branches:
-      - main
   schedule:
-    # TEMP validation window: run every 5 minutes for immediate production verification.
-    # Revert to '0 4 * * *' after validation.
-    - cron: '*/5 * * * *'
+    - cron: '0 4 * * *'  # 04:00 UTC = 01:00 Fortaleza (UTC-3)
+  workflow_dispatch:
 
 concurrency:
   group: nightly-etl-main
@@ -42,11 +38,11 @@ jobs:
       VERIFY_TABLES: 'is_pedidos,is_clientes'
       VERIFY_MIN_ROWS: '1'
       VERIFY_RECENCY_TABLE: 'is_pedidos'
-      VERIFY_RECENCY_COLUMNS: 'updated_at,created_at,data'
+      VERIFY_RECENCY_COLUMNS: 'created_at'
       VERIFY_MAX_AGE_HOURS: '72'
       VERIFY_MIN_DATE: '2026-01-25'
       VERIFY_MIN_DATE_TABLE: 'is_pedidos'
-      VERIFY_MIN_DATE_COLUMNS: 'created_at,updated_at,data'
+      VERIFY_MIN_DATE_COLUMNS: 'created_at'
       VERIFY_MIN_DATE_MIN_ROWS: '1'
       VERIFY_BASELINE_PATH: './backups/verify_baseline.json'
 
