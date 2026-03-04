@@ -107,6 +107,12 @@ jobs:
         run: |
           set -o pipefail
           python scripts/check_env.py --mode production 2>&1 | tee logs/01_check_env.log
+          rc=${PIPESTATUS[0]}
+          if [ "${rc}" -ne 0 ]; then
+            tail_msg="$(tail -n 20 logs/01_check_env.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            echo "::error::check_env failed: ${tail_msg}"
+            exit "${rc}"
+          fi
 
       - name: Setup SSH key for SFTP
         env:
@@ -165,6 +171,8 @@ jobs:
             fi
           done
           echo "daily_job failed after ${attempts} attempts" | tee -a logs/02_daily_job.log
+          tail_msg="$(tail -n 40 logs/02_daily_job.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+          echo "::error::daily_job failed: ${tail_msg}"
           exit 1
 
       - name: Verify Supabase load
@@ -173,6 +181,12 @@ jobs:
         run: |
           set -o pipefail
           python scripts/verify_supabase_load.py 2>&1 | tee logs/03_verify.log
+          rc=${PIPESTATUS[0]}
+          if [ "${rc}" -ne 0 ]; then
+            tail_msg="$(tail -n 30 logs/03_verify.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            echo "::error::verify_supabase_load failed: ${tail_msg}"
+            exit "${rc}"
+          fi
 
       - name: Ensure artifact files exist
         if: always()
