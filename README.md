@@ -10,9 +10,12 @@ Pipeline de produção para carga diária automática:
 ## Agendamento automático
 - Workflow: `.github/workflows/nightly_etl.yml`
 - Trigger: `schedule` apenas
-- Cron UTC: `0 4 * * *`
-- Horário Fortaleza (UTC-3): **01:00 da madrugada, diariamente**
+- Cron UTC (temporário / burn-in): `*/15 * * * *`
+- Cron UTC (final): `0 4 * * *`
+- Horário Fortaleza (UTC-3, final): **01:00 da madrugada, diariamente**
 - Execução ocorre no branch padrão (`main`) do repositório.
+
+Após **1 run bem-sucedida** (incluindo `Verify Supabase load`), reverta o cron para o valor final.
 
 ## Fonte de backup (produção)
 - FTP host: `162.241.203.52`

@@ -35,7 +35,7 @@ MYSQL_HOST     = os.getenv("MYSQL_HOST", "127.0.0.1")
 MYSQL_PORT     = int(os.getenv("MYSQL_PORT", "3307"))
 MYSQL_USER     = os.getenv("MYSQL_USER", "root")
 MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "root")
-MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "legacy")
+MYSQL_DATABASE = os.getenv("MYSQL_DATABASE", "nblgrafica_app")
 
 COMPOSE_FILE   = os.getenv("DOCKER_COMPOSE_FILE", "docker-compose.yml")
 SQL_INPUT_DIR  = Path(os.getenv("SQL_INPUT_DIR", "./sql_input"))

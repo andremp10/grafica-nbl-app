@@ -4,7 +4,7 @@ services:
     container_name: supabase-migration-mysql
     environment:
       MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: legacy
+      MYSQL_DATABASE: nblgrafica_app
     ports:
       - "3307:3306"
     volumes:

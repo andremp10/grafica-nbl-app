@@ -6,9 +6,12 @@ Operar a carga automática noturna MySQL -> Supabase com validação pós-ETL e 
 ## Janela de execução
 - Workflow: `Nightly ETL`
 - Trigger: `schedule`
-- Cron UTC: `0 4 * * *`
-- Fortaleza (UTC-3): **01:00 diariamente**
+- Cron UTC (temporário / burn-in): `*/15 * * * *`
+- Cron UTC (final): `0 4 * * *`
+- Fortaleza (UTC-3, final): **01:00 diariamente**
 - O agendamento roda no branch padrão (`main`).
+
+Após a primeira execução bem-sucedida, reverta o cron para o valor final.
 
 ## Fluxo executado
 1. `check_env` em modo produção (fail-fast)

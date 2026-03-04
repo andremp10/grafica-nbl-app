@@ -2,11 +2,13 @@
 
 on:
   schedule:
-    - cron: '0 4 * * *'
+    # TEMP (burn-in): run every 15 minutes to get first success quickly.
+    # Revert to: '0 4 * * *' (01:00 Fortaleza / 04:00 UTC) after 1 successful run.
+    - cron: '*/15 * * * *'
 
 concurrency:
   group: nightly-etl-main
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   etl:
@@ -24,7 +26,7 @@ jobs:
       MYSQL_PORT: '3307'
       MYSQL_USER: 'root'
       MYSQL_PASSWORD: 'root'
-      MYSQL_DATABASE: 'legacy'
+      MYSQL_DATABASE: 'nblgrafica_app'
       ETL_BATCH_SIZE: '200'
       ETL_RETRIES: '6'
       ETL_VALIDATE_ONLY: '0'
@@ -40,20 +42,6 @@ jobs:
       VERIFY_RECENCY_COLUMNS: 'updated_at,created_at,data'
       VERIFY_MAX_AGE_HOURS: '72'
       VERIFY_BASELINE_PATH: './backups/verify_baseline.json'
-
-    services:
-      mysql:
-        image: mysql:5.7
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: legacy
-        ports:
-          - 3307:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=12
 
     steps:
       - name: Checkout
