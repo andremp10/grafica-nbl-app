@@ -1059,8 +1059,6 @@ def transform_cliente_endereco_from_cliente(row: dict) -> Optional[dict]:
         "complemento": to_str(row.get("complemento")),
         "cidade": to_str(row.get("cidade")),
         "estado": to_str(row.get("estado")),
-        "is_principal": True,
-        "created_at": to_ts(row.get("data")),
     }
 
 
@@ -1930,7 +1928,7 @@ def _process_categorias(cursor, pg, slug_map):
 
     # Insert sem parent_id primeiro, depois update
     for row in batch:
-        row["_parent"] = row.pop("parent_id", None)
+        row.pop("parent_id", None)
         row["parent_id"] = None
 
     batch, ok, err = pg_flush(pg, "is_produtos_categorias", batch, "id", ok, err)
