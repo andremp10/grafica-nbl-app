@@ -891,7 +891,8 @@ def transform_column(
     if pg_col.endswith("_id") and pg_col != "id":
         ref = FK_MAP.get(pg_col)
         if ref == "_int":
-            return to_int(val)
+            v = to_int(val)
+            return v if v else None  # 0 = sentinel "no status" → NULL
         if ref == "_orphan":
             orphan_table = pg_col.replace("_id", "s")
             return uuid5_for(orphan_table, val) if val else None
