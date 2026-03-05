@@ -36,6 +36,7 @@ load_dotenv()
 # ============================================================================
 UUID_NS = uuid.UUID("2a6b2c31-0f2a-4dfd-8cde-7b4b9b3f1c5a")
 BATCH_SIZE = int(os.getenv("ETL_BATCH_SIZE", "2000"))
+WRITE_MODE = os.getenv("ETL_WRITE_MODE", "insert").strip().lower()  # insert | upsert
 VALIDATE_ONLY = os.getenv("ETL_VALIDATE_ONLY", "0") == "1"
 ONLY_TABLES_ENV = os.getenv("ETL_ONLY_TABLES", "").strip()
 ONLY_TABLES: Set[str] = set(t.strip() for t in ONLY_TABLES_ENV.split(",") if t.strip())
@@ -982,13 +983,15 @@ def pg_upsert(
     cols_quoted = ", ".join(f'"{c}"' for c in columns)
     conflict_quoted = ", ".join(f'"{c}"' for c in conflict_cols)
 
-    if update_cols:
+    if WRITE_MODE == "upsert" and update_cols:
         update_set = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in update_cols)
         sql = (
             f'INSERT INTO public."{table}" ({cols_quoted}) VALUES %s '
             f'ON CONFLICT ({conflict_quoted}) DO UPDATE SET {update_set}'
         )
     else:
+        # Modo padrão (insert): usado no nightly após truncate.
+        # É significativamente mais rápido que upsert com DO UPDATE.
         sql = (
             f'INSERT INTO public."{table}" ({cols_quoted}) VALUES %s '
             f'ON CONFLICT ({conflict_quoted}) DO NOTHING'
@@ -1169,7 +1172,7 @@ def run_etl():
     else:
         tables_to_process = list(EXEC_ORDER)
 
-    log(f"Tabelas: {len(tables_to_process)} | Batch: {BATCH_SIZE}")
+    log(f"Tabelas: {len(tables_to_process)} | Batch: {BATCH_SIZE} | WriteMode: {WRITE_MODE}")
 
     stats: Dict[str, Dict[str, int]] = {}
     seen_emails: Dict[str, int] = {}
