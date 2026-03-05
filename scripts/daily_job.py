@@ -22,10 +22,10 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.check_env import check_env
-from scripts.fetch_backup import fetch_backup
-from scripts.import_dump import import_dump
-from scripts.truncate_supabase import truncate_supabase
+from scripts.check_env import check_env  # noqa: E402
+from scripts.fetch_backup import fetch_backup  # noqa: E402
+from scripts.import_dump import import_dump  # noqa: E402
+from scripts.truncate_supabase import truncate_supabase  # noqa: E402
 
 load_dotenv()
 
