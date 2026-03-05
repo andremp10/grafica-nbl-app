@@ -713,6 +713,33 @@ SELF_REF_TABLES: Dict[str, str] = {
     "is_pedidos_pagamentos": "original_id",
 }
 
+# Colunas NOT NULL que DEVEM ser não-nulas após transform.
+# Linhas onde qualquer dessas colunas resolve para None são DESCARTADAS.
+# Basado em constraints NOT NULL sem DEFAULT nas tabelas Supabase.
+REQUIRED_NONNULL_COLS: Dict[str, Set[str]] = {
+    # frete_id uuid NOT NULL → is_entregas_fretes
+    "is_entregas_fretes_locais":    {"frete_id"},
+    # produto_id uuid NOT NULL → is_produtos
+    "is_produtos_categorias_extras": {"produto_id"},
+    # pedido_id uuid NOT NULL → is_pedidos
+    "is_pedidos_fretes_detalhes":   {"pedido_id"},
+    "is_pedidos_itens":             {"pedido_id"},
+    # motivo text NOT NULL (sem default)
+    "is_pedidos_itens_reprovados":  {"motivo"},
+    "is_pedidos_pag_reprovados":    {"motivo"},
+}
+
+# Fallbacks para colunas NOT NULL (sem DEFAULT no schema) que podem vir nulas do MySQL.
+# Aplicados APÓS transform_row, ANTES do insert.
+NONNULL_FALLBACKS: Dict[str, Dict[str, Any]] = {
+    # senha_log NOT NULL, acesso NOT NULL
+    "is_usuarios":              {"senha_log": "", "acesso": 0},
+    # status NOT NULL (override int, pode ser nulo no legado)
+    "is_financeiro_lancamentos": {"status": 0},
+    # saldo_antes/saldo_depois/valor NOT NULL
+    "is_clientes_extratos":     {"saldo_antes": 0.0, "saldo_depois": 0.0, "valor": 0.0},
+}
+
 
 # ============================================================================
 # TRANSFORMAÇÕES
@@ -2019,6 +2046,13 @@ def _process_pedidos(cursor, pg, cupom_codigos):
             try:
                 t_row = transform_pedido(row, cupom_codigos)
                 if t_row and t_row.get("id"):
+                    # cliente_id NOT NULL — skip orphan pedidos
+                    if t_row.get("cliente_id") is None:
+                        record_etl_error("is_pedidos", row.get("id"),
+                            "cliente_id is None (cliente not found) — skipping",
+                            stage="required_nonnull_skip")
+                        err += 1
+                        continue
                     batch.append(t_row)
             except Exception as e:
                 if err < 5:
@@ -2059,6 +2093,16 @@ def _process_pagamentos(cursor, pg, self_ref_data):
             try:
                 t_row = transform_pagamento(row)
                 if t_row and t_row.get("id"):
+                    # cliente_id NOT NULL — skip orphan pagamentos
+                    if t_row.get("cliente_id") is None:
+                        record_etl_error("is_pedidos_pagamentos", row.get("id"),
+                            "cliente_id is None — skipping",
+                            stage="required_nonnull_skip")
+                        err += 1
+                        continue
+                    # forma NOT NULL — fallback to empty string
+                    if t_row.get("forma") is None:
+                        t_row["forma"] = ""
                     # Self-ref 2-pass para original_id
                     if t_row.get("original_id"):
                         self_ref_data["is_pedidos_pagamentos"].append(
@@ -2094,9 +2138,13 @@ def _process_generic(cursor, pg, table, mysql_table, mapping, conflict_col, self
         log(f"    Skip (MySQL): {e}", "WARN")
         return 0, 0
 
+    required_nonnull = REQUIRED_NONNULL_COLS.get(table, set())
+    fallbacks = NONNULL_FALLBACKS.get(table, {})
+
     ok, err = 0, 0
     batch: List[dict] = []
     has_id = table not in TABLES_WITHOUT_ID
+    skipped = 0
     processed = 0
     next_progress = 20_000
 
@@ -2109,6 +2157,18 @@ def _process_generic(cursor, pg, table, mysql_table, mapping, conflict_col, self
             try:
                 t_row = transform_row(row, table, mapping)
                 if t_row and (not has_id or t_row.get("id") is not None):
+                    # Skip rows where required NOT NULL columns are None after transform
+                    missing = [c for c in required_nonnull if t_row.get(c) is None]
+                    if missing:
+                        record_etl_error(table, row.get("id"),
+                            f"Required NOT NULL columns are None: {missing}",
+                            stage="required_nonnull_skip")
+                        skipped += 1
+                        continue
+                    # Apply NOT NULL fallbacks for scalar columns
+                    for col, default in fallbacks.items():
+                        if t_row.get(col) is None:
+                            t_row[col] = default
                     if self_ref_col and t_row.get(self_ref_col):
                         self_ref_data[table].append(
                             {"id": t_row["id"], self_ref_col: t_row[self_ref_col]}
@@ -2125,7 +2185,8 @@ def _process_generic(cursor, pg, table, mysql_table, mapping, conflict_col, self
             next_progress += 20_000
 
     batch, ok, err = pg_flush(pg, table, batch, conflict_col, ok, err)
-    log(f"  → OK={ok:,}  ERR={err:,}")
+    skip_msg = f"  skipped={skipped:,}" if skipped else ""
+    log(f"  → OK={ok:,}  ERR={err:,}{skip_msg}")
     return ok, err
 
 
