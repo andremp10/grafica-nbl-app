@@ -188,8 +188,7 @@
     "bairro": "bairro",
     "complemento": "complemento",
     "cidade": "cidade",
-    "estado": "estado",
-    "created_at": "data"
+    "estado": "estado"
   },
   "is_entregas_fretes_locais": {
     "id": "id",
@@ -311,16 +310,7 @@
   },
   "is_pedidos_fretes_entregas": {
     "id": "id",
-    "pedido_id": "pedido",
-    "envio_id": "envio_id",
-    "metodo_titulo": "metodo_titulo",
-    "modulo": "modulo",
-    "prazo_dias": "prazo_dias",
-    "valor": "valor",
-    "sucesso": "sucesso",
-    "hash": "hash",
-    "descricao": "descricao",
-    "created_at": "data"
+    "pedido_id": "pedido"
   },
   "is_pedidos_itens": {
     "id": "id",
@@ -350,7 +340,7 @@
     "formato": "formato",
     "formato_detalhes": "formato_detalhes",
     "visto": "visto",
-    "vars_raw": "vars_raw",
+    "vars_raw": "vars",
     "vars_detalhes": "vars_detalhes",
     "json": "json",
     "categoria": "categoria",
@@ -376,8 +366,8 @@
     "caixa_id": "caixa",
     "original_id": "original",
     "bandeira": "bandeira",
-    "parcelas_raw": "parcelas_raw",
-    "parcelas_qtd": "parcelas_qtd",
+    "parcelas_raw": "parcelas",
+    "parcelas_qtd": "parcelas",
     "created_at": "data"
   },
   "is_usuarios_historico": {

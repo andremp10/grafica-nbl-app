@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from scripts.verify_supabase_load import verify_supabase_load
+from scripts.verify_supabase_load import _parse_min_rows_by_table, verify_supabase_load
 
 
 class CursorStub:
@@ -134,3 +134,22 @@ def test_verify_fails_when_no_rows_after_min_date(tmp_path: Path):
         with patch("scripts.verify_supabase_load.psycopg2.connect", return_value=conn):
             with pytest.raises(RuntimeError, match="VERIFY_MIN_DATE"):
                 verify_supabase_load()
+
+
+def test_parse_min_rows_by_table_overrides_default() -> None:
+    tables = ["is_pedidos", "is_clientes_pf", "is_clientes_pj"]
+    parsed = _parse_min_rows_by_table(
+        "is_clientes_pf:4589,is_clientes_pj:3021",
+        tables,
+        default_min_rows=1,
+    )
+    assert parsed == {
+        "is_pedidos": 1,
+        "is_clientes_pf": 4589,
+        "is_clientes_pj": 3021,
+    }
+
+
+def test_parse_min_rows_by_table_rejects_unknown_table() -> None:
+    with pytest.raises(ValueError, match="unknown table"):
+        _parse_min_rows_by_table("is_financeiro_lancamentos:100", ["is_pedidos"], 1)

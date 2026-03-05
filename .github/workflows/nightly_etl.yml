@@ -37,8 +37,9 @@ jobs:
       SQL_INPUT_DIR: './sql_input'
       LOGS_DIR: './logs'
       PYTHONUNBUFFERED: '1'
-      VERIFY_TABLES: 'is_pedidos,is_clientes'
+      VERIFY_TABLES: 'is_pedidos,is_clientes,is_clientes_pf,is_clientes_pj,is_financeiro_lancamentos'
       VERIFY_MIN_ROWS: '1'
+      VERIFY_MIN_ROWS_BY_TABLE: 'is_clientes_pf:4589,is_clientes_pj:3021,is_financeiro_lancamentos:97985'
       VERIFY_RECENCY_TABLE: 'is_pedidos'
       VERIFY_RECENCY_COLUMNS: 'created_at'
       VERIFY_MAX_AGE_HOURS: '72'
@@ -87,6 +88,7 @@ jobs:
             echo "mysql_port=${MYSQL_PORT}"
             echo "mysql_database=${MYSQL_DATABASE}"
             echo "verify_tables=${VERIFY_TABLES}"
+            echo "verify_min_rows_by_table=${VERIFY_MIN_ROWS_BY_TABLE}"
             echo "verify_min_date=${VERIFY_MIN_DATE}"
           } | tee logs/00_context.log
 

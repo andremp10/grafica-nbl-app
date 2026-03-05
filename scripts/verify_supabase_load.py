@@ -43,6 +43,38 @@ def _parse_tables(raw: str) -> list[str]:
     return tables
 
 
+def _parse_min_rows_by_table(raw: str, tables: list[str], default_min_rows: int) -> dict[str, int]:
+    thresholds = {table: default_min_rows for table in tables}
+    text = (raw or "").strip()
+    if not text:
+        return thresholds
+
+    for part in text.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        if ":" not in item:
+            raise ValueError(f"VERIFY_MIN_ROWS_BY_TABLE: invalid item '{item}' (expected table:min)")
+        table, value = item.split(":", 1)
+        table = table.strip()
+        value = value.strip()
+        if table not in thresholds:
+            raise ValueError(
+                f"VERIFY_MIN_ROWS_BY_TABLE: unknown table '{table}' (must be in VERIFY_TABLES)"
+            )
+        try:
+            minimum = int(value)
+        except ValueError as exc:
+            raise ValueError(
+                f"VERIFY_MIN_ROWS_BY_TABLE: invalid minimum for '{table}' -> '{value}'"
+            ) from exc
+        if minimum < 0:
+            raise ValueError(f"VERIFY_MIN_ROWS_BY_TABLE: minimum must be >= 0 for '{table}'")
+        thresholds[table] = minimum
+
+    return thresholds
+
+
 def _count_rows(cur, table: str) -> int:
     cur.execute(f'SELECT COUNT(*) FROM "{table}"')
     row = cur.fetchone()
@@ -129,6 +161,11 @@ def verify_supabase_load() -> None:
     db_url = _require_env("SUPABASE_DB_URL")
     tables = _parse_tables(os.getenv("VERIFY_TABLES", "is_pedidos,is_clientes"))
     min_rows = int(os.getenv("VERIFY_MIN_ROWS", "1"))
+    min_rows_by_table = _parse_min_rows_by_table(
+        os.getenv("VERIFY_MIN_ROWS_BY_TABLE", ""),
+        tables,
+        min_rows,
+    )
     recency_table = os.getenv("VERIFY_RECENCY_TABLE", tables[0]).strip() or tables[0]
     max_age_hours = float(os.getenv("VERIFY_MAX_AGE_HOURS", "72"))
     recency_candidates = [
@@ -159,11 +196,12 @@ def verify_supabase_load() -> None:
             for table in tables:
                 count = _count_rows(cur, table)
                 counts[table] = count
-                if count < min_rows:
+                required = min_rows_by_table[table]
+                if count < required:
                     raise RuntimeError(
-                        f"verification failed: table '{table}' has {count} rows (< {min_rows})"
+                        f"verification failed: table '{table}' has {count} rows (< {required})"
                     )
-                log.info("[VERIFY OK] table=%s count=%d", table, count)
+                log.info("[VERIFY OK] table=%s count=%d min_required=%d", table, count, required)
 
             recency_column = _find_recency_column(cur, recency_table, recency_candidates)
             if recency_column:

@@ -21,7 +21,9 @@ import re
 import uuid
 import json
 import sys
+import html
 import datetime as dt
+from pathlib import Path
 from typing import Optional, Dict, Any, Set, List, Tuple
 
 from dotenv import load_dotenv
@@ -40,6 +42,12 @@ WRITE_MODE = os.getenv("ETL_WRITE_MODE", "insert").strip().lower()  # insert | u
 VALIDATE_ONLY = os.getenv("ETL_VALIDATE_ONLY", "0") == "1"
 ONLY_TABLES_ENV = os.getenv("ETL_ONLY_TABLES", "").strip()
 ONLY_TABLES: Set[str] = set(t.strip() for t in ONLY_TABLES_ENV.split(",") if t.strip())
+MAPPING_PATH = Path(__file__).resolve().parent / "column_mapping.json"
+SCHEMA_PATH_ENV = (os.getenv("ETL_SCHEMA_PATH", "") or "").strip()
+ERROR_REPORT_PATH = Path(
+    os.getenv("ETL_ERRORS_PATH", os.path.join(os.getenv("LOGS_DIR", "./logs"), "etl_errors.json"))
+).resolve()
+MAX_CAPTURED_ERRORS = int(os.getenv("ETL_MAX_ERROR_REPORT_ROWS", "10000"))
 
 # MySQL → Supabase: nomes de tabela diferentes
 MYSQL_TABLE_NAME_MAP = {
@@ -52,6 +60,44 @@ DERIVED_TABLES = {"is_clientes_pf", "is_clientes_pj"}
 # Tabelas sem coluna 'id' no Supabase (PK composta)
 TABLES_WITHOUT_ID: Set[str] = {"is_mkt_cupons_produtos"}
 
+TECHNICAL_TEXT_COLUMNS: Set[str] = {
+    "email_log",
+    "uid",
+    "url",
+    "link",
+    "json",
+    "hash",
+    "senha_log",
+    "sku",
+    "gtin",
+    "mpn",
+    "ncm",
+}
+
+HUMAN_TEXT_COLUMNS: Set[str] = {
+    "nome",
+    "sobrenome",
+    "razao_social",
+    "fantasia",
+    "titulo",
+    "descricao",
+    "obs",
+    "obs_interna",
+    "motivo",
+    "regra",
+    "cargo",
+    "bairro",
+    "cidade",
+    "estado",
+    "logradouro",
+    "complemento",
+    "metodo_titulo",
+}
+
+NAME_LIKE_COLUMNS: Set[str] = {"nome", "sobrenome", "razao_social", "fantasia", "titulo"}
+
+ETL_ERRORS: List[dict] = []
+
 # ============================================================================
 # LOGGING
 # ============================================================================
@@ -63,6 +109,57 @@ def log(msg: str, level: str = "INFO"):
     mm, ss = divmod(int(elapsed.total_seconds()), 60)
     hh, mm = divmod(mm, 60)
     print(f"[{hh:02d}:{mm:02d}:{ss:02d}] [{level:5s}] {msg}", flush=True)
+
+
+def _short_error_message(message: str, max_len: int = 320) -> str:
+    text = (message or "").strip().replace("\n", " ")
+    return text if len(text) <= max_len else text[: max_len - 3] + "..."
+
+
+def _probable_constraint(message: str) -> Optional[str]:
+    patterns = [
+        r'constraint "([^"]+)"',
+        r"for key '([^']+)'",
+        r"violates check constraint \"([^\"]+)\"",
+        r"foreign key constraint \"([^\"]+)\"",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, message, re.IGNORECASE)
+        if m:
+            return m.group(1)
+    return None
+
+
+def record_etl_error(
+    table: str,
+    legacy_id: Any,
+    message: str,
+    stage: str = "insert",
+    probable: Optional[str] = None,
+) -> None:
+    if len(ETL_ERRORS) >= MAX_CAPTURED_ERRORS:
+        return
+    ETL_ERRORS.append(
+        {
+            "table": table,
+            "legacy_id": None if legacy_id in (None, "", "None") else str(legacy_id),
+            "stage": stage,
+            "probable_constraint": probable or _probable_constraint(message),
+            "message": _short_error_message(message),
+        }
+    )
+
+
+def write_etl_error_report(total_errors: int) -> None:
+    ERROR_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        "total_errors": int(total_errors),
+        "captured_errors": len(ETL_ERRORS),
+        "errors": ETL_ERRORS,
+    }
+    ERROR_REPORT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    log(f"Error report saved at {ERROR_REPORT_PATH}", "WARN")
 
 
 # ============================================================================
@@ -150,19 +247,46 @@ def to_str(val: Any) -> Optional[str]:
     return s if s and s not in ("None", "null") else None
 
 
-def safe_str(val: Any) -> Optional[str]:
-    """Limpa strings sem destruir caracteres válidos como _, @, %."""
-    s = to_str(val)
-    if not s:
-        return None
-    # Tentar corrigir mojibake (UTF-8 lido como Latin-1)
+EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+PHONE_RE = re.compile(r"(\+?\d[\d\s().\-]{7,}\d)")
+CONTROL_CHARS_RE = re.compile(r"[\x00-\x1F\x7F]")
+ASTERISK_NOISE_RE = re.compile(r"\*{3,}")
+ESCAPED_QUOTE_RE = re.compile(r"\\+'")
+MOJIBAKE_HINT_RE = re.compile(r"(Ã.|Â.|â.|�)")
+
+
+def _fix_mojibake(text: str) -> str:
+    if not MOJIBAKE_HINT_RE.search(text):
+        return text
     try:
-        fixed = s.encode("latin1").decode("utf-8")
-        if fixed != s:
-            s = fixed
+        candidate = text.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
+        if candidate and candidate != text:
+            return candidate
     except Exception:
         pass
-    return s.strip() or None
+    return text
+
+
+def clean_human_text(value: Any, field_name: str = "") -> Optional[str]:
+    s = to_str(value)
+    if not s:
+        return None
+    s = _fix_mojibake(s)
+    s = html.unescape(s)
+    s = ESCAPED_QUOTE_RE.sub("'", s).replace("\\\"", "\"")
+    s = CONTROL_CHARS_RE.sub(" ", s)
+    s = ASTERISK_NOISE_RE.sub(" ", s)
+    if field_name in NAME_LIKE_COLUMNS:
+        s = EMAIL_RE.sub(" ", s)
+        s = PHONE_RE.sub(" ", s)
+    s = re.sub(r"\s+", " ", s).strip(" -_/|,;.")
+    return s or None
+
+
+def safe_str(val: Any, field_name: str = "") -> Optional[str]:
+    if field_name and field_name in HUMAN_TEXT_COLUMNS and field_name not in TECHNICAL_TEXT_COLUMNS:
+        return clean_human_text(val, field_name=field_name)
+    return to_str(val)
 
 
 # ============================================================================
@@ -170,16 +294,27 @@ def safe_str(val: Any) -> Optional[str]:
 # ============================================================================
 def get_mysql():
     import mysql.connector
-    return mysql.connector.connect(
-        host=os.getenv("MYSQL_HOST", "127.0.0.1"),
-        port=int(os.getenv("MYSQL_PORT", "3307")),
-        user=os.getenv("MYSQL_USER", "root"),
-        password=os.getenv("MYSQL_PASSWORD", "root"),
-        database=os.getenv("MYSQL_DATABASE", "legacy"),
-        charset="utf8mb4",
-        use_unicode=True,
-        use_pure=True,
-    )
+    config = {
+        "host": os.getenv("MYSQL_HOST", "127.0.0.1"),
+        "port": int(os.getenv("MYSQL_PORT", "3307")),
+        "user": os.getenv("MYSQL_USER", "root"),
+        "password": os.getenv("MYSQL_PASSWORD", "root"),
+        "database": os.getenv("MYSQL_DATABASE", "nblgrafica_app"),
+        "charset": "utf8mb4",
+        "use_unicode": True,
+        "use_pure": True,
+    }
+    try:
+        return mysql.connector.connect(**config)
+    except mysql.connector.Error as exc:
+        if getattr(exc, "errno", None) == 1049 and config["database"] != "nblgrafica_app":
+            fallback = {**config, "database": "nblgrafica_app"}
+            log(
+                f"MySQL database '{config['database']}' inexistente; fallback para '{fallback['database']}'",
+                "WARN",
+            )
+            return mysql.connector.connect(**fallback)
+        raise
 
 
 def get_pg():
@@ -273,7 +408,7 @@ TABLE_TYPE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "is_pedidos_itens":            {"status": "str", "visto": "int"},
     "is_pedidos_pagamentos":       {"visto": "bool"},
     "is_produtos":                 {"valor": "str", "visivel": "bool", "prazo": "str"},
-    "is_financeiro_lancamentos":   {"valor": "money", "tipo": "int", "status": "int"},
+    "is_financeiro_lancamentos":   {"valor": "money", "tipo": "finance_tipo", "status": "int"},
     "is_entregas_fretes":          {"prazo": "int", "tipo": "int"},
     "is_entregas_balcoes":         {"prazo": "str"},
     "is_pedidos":                  {"frete_tipo": "str", "origem": "int"},
@@ -504,6 +639,31 @@ COLUMN_MAPPING: Dict[str, Dict[str, str]] = {
 # ============================================================================
 # ORDEM TOPOLÓGICA — respeita FKs do Supabase
 # ============================================================================
+SOURCE_TABLE_OVERRIDES: Dict[str, str] = {
+    "is_clientes_pf": "is_clientes",
+    "is_clientes_pj": "is_clientes",
+    "is_mkt_cupons_produtos": "is_mkt_cupons",
+}
+
+# Tabelas cuja transformação não usa leitura 1:1 de colunas de origem do mapping.
+SOURCE_COLUMN_VALIDATION_SKIP: Set[str] = {
+    "is_mkt_cupons_produtos",
+}
+
+
+def load_column_mapping(path: Path = MAPPING_PATH) -> Dict[str, Dict[str, str]]:
+    if not path.exists():
+        raise FileNotFoundError(f"column_mapping.json not found: {path}")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("column_mapping.json must be an object")
+    return payload
+
+
+# Fonte canônica: etl/column_mapping.json
+COLUMN_MAPPING = load_column_mapping()
+
+
 EXEC_ORDER = [
     # Nível 0: sem dependências
     "is_extras_status",
@@ -558,6 +718,95 @@ SELF_REF_TABLES: Dict[str, str] = {
 # TRANSFORMAÇÕES
 # ============================================================================
 
+def resolve_schema_path() -> Path:
+    if SCHEMA_PATH_ENV:
+        return Path(SCHEMA_PATH_ENV).resolve()
+    candidates = [
+        Path(__file__).resolve().parent.parent / "schema_ref.sql",
+        Path(__file__).resolve().parents[2] / ".vscode" / "schema_atualizado_grafica.sql",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    raise FileNotFoundError("schema file not found (set ETL_SCHEMA_PATH)")
+
+
+def load_target_schema_columns(schema_path: Optional[Path] = None) -> Dict[str, Set[str]]:
+    path = schema_path or resolve_schema_path()
+    sql = path.read_text(encoding="utf-8", errors="replace")
+    tables: Dict[str, Set[str]] = {}
+    pattern = re.compile(r"CREATE TABLE public\.(\w+) \((.*?)\);", re.IGNORECASE | re.DOTALL)
+    for table_name, body in pattern.findall(sql):
+        cols: Set[str] = set()
+        for raw_line in body.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("CONSTRAINT"):
+                continue
+            match = re.match(r"([a-zA-Z_][a-zA-Z0-9_]*)\s", line)
+            if match:
+                cols.add(match.group(1))
+        tables[table_name] = cols
+    return tables
+
+
+def load_source_table_columns(mysql_cursor, table_name: str) -> Set[str]:
+    mysql_cursor.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = DATABASE()
+          AND table_name = %s
+        """,
+        (table_name,),
+    )
+    return {str(row["column_name"]) for row in mysql_cursor.fetchall()}
+
+
+def resolve_source_table(table: str) -> str:
+    if table in SOURCE_TABLE_OVERRIDES:
+        return SOURCE_TABLE_OVERRIDES[table]
+    return MYSQL_TABLE_NAME_MAP.get(table, table)
+
+
+def validate_mapping_contract(mysql_cursor) -> List[str]:
+    errors: List[str] = []
+    schema_tables = load_target_schema_columns()
+    source_columns_cache: Dict[str, Set[str]] = {}
+
+    for table in EXEC_ORDER:
+        mapping = COLUMN_MAPPING.get(table)
+        if not mapping:
+            errors.append(f"{table}: missing mapping entry")
+            continue
+
+        schema_cols = schema_tables.get(table)
+        if not schema_cols:
+            errors.append(f"{table}: missing in target schema")
+        else:
+            missing_target_cols = sorted(set(mapping.keys()) - schema_cols)
+            if missing_target_cols:
+                errors.append(
+                    f"{table}: mapped target cols missing in schema -> {', '.join(missing_target_cols)}"
+                )
+
+        source_table = resolve_source_table(table)
+        if source_table not in source_columns_cache:
+            try:
+                source_columns_cache[source_table] = load_source_table_columns(mysql_cursor, source_table)
+            except Exception as exc:
+                errors.append(f"{table}: source table '{source_table}' unavailable ({exc})")
+                source_columns_cache[source_table] = set()
+        source_cols = source_columns_cache[source_table]
+        if table not in SOURCE_COLUMN_VALIDATION_SKIP:
+            missing_source_cols = sorted(set(mapping.values()) - source_cols)
+            if missing_source_cols:
+                errors.append(
+                    f"{table}: mapped source cols missing in '{source_table}' -> {', '.join(missing_source_cols)}"
+                )
+
+    return errors
+
+
 def _legacy_fk_exists(ref_table: str, legacy_id: Any) -> bool:
     """Retorna True se o legacy_id existe na tabela de referência no MySQL."""
     if legacy_id is None:
@@ -608,6 +857,8 @@ def transform_column(
         if ov == "bool":
             return to_bool(val)
         if ov == "str":
+            if pg_col in HUMAN_TEXT_COLUMNS and pg_col not in TECHNICAL_TEXT_COLUMNS:
+                return clean_human_text(val, field_name=pg_col)
             return to_str(val)
         if ov == "money":
             return to_money(val)
@@ -615,6 +866,13 @@ def transform_column(
             return to_decimal(val)
         if ov == "ts":
             return to_ts(val)
+        if ov == "finance_tipo":
+            normalized = to_int(val)
+            if normalized == 1:
+                return 1
+            if normalized == 0:
+                return 2
+            raise ValueError(f"is_financeiro_lancamentos.tipo inválido no legado: {val!r}")
         if ov == "cupom_tipo":
             # MySQL: '$' → 'amount', '%' → 'percent', 'f' → 'amount' (frete grátis)
             s = to_str(val)
@@ -625,6 +883,8 @@ def transform_column(
             if s and s.lower() in ("percent", "amount"):
                 return s.lower()
             return "amount"  # default
+        if pg_col in HUMAN_TEXT_COLUMNS and pg_col not in TECHNICAL_TEXT_COLUMNS:
+            return clean_human_text(val, field_name=pg_col)
         return to_str(val)
 
     # --- FK columns → UUID5 ---
@@ -667,7 +927,11 @@ def transform_column(
         return to_str(val)  # Will be handled as Json in upsert
 
     # --- Default: string ---
-    return to_str(val) if isinstance(val, str) else val
+    if isinstance(val, str):
+        if pg_col in HUMAN_TEXT_COLUMNS and pg_col not in TECHNICAL_TEXT_COLUMNS:
+            return clean_human_text(val, field_name=pg_col)
+        return to_str(val)
+    return val
 
 
 def transform_row(
@@ -676,6 +940,7 @@ def transform_row(
     """Transforma uma row MySQL para formato Supabase."""
     new_row: dict = {}
     legacy_id = row.get("id")
+    new_row["__legacy_id"] = legacy_id
     overrides = TABLE_TYPE_OVERRIDES.get(table, {})
 
     # PK
@@ -711,7 +976,12 @@ def transform_cliente(row: dict) -> Optional[dict]:
         return None
     # Normalizar tipo: 'fisica' → 'PF', 'juridica' → 'PJ'
     t = str(row.get("tipo", "")).lower().strip()
-    d["tipo"] = "PJ" if t in ("juridica", "pj") else "PF"
+    if t in ("juridica", "pj"):
+        d["tipo"] = "PJ"
+    elif t in ("fisica", "pf"):
+        d["tipo"] = "PF"
+    else:
+        raise ValueError(f"is_clientes.tipo inválido no legado para id={row.get('id')}: {t!r}")
     # Normalizar email
     if d.get("email_log"):
         d["email_log"] = d["email_log"].lower().strip()
@@ -726,13 +996,13 @@ def transform_cliente_pf(row: dict) -> Optional[dict]:
     cid = uuid5_for("is_clientes", row.get("id"))
     if not cid:
         return None
-    nome = safe_str(row.get("nome"))
+    nome = safe_str(row.get("nome"), "nome")
     if not nome:
         return None  # CHECK constraint: nome IS NOT NULL
     return {
         "cliente_id": cid,
         "nome": nome,
-        "sobrenome": safe_str(row.get("sobrenome")),
+        "sobrenome": safe_str(row.get("sobrenome"), "sobrenome"),
         "nascimento": to_ts(row.get("nascimento")),
         "cpf": to_str(row.get("cpf")),
         "sexo": to_str(row.get("sexo")),
@@ -747,16 +1017,20 @@ def transform_cliente_pj(row: dict) -> Optional[dict]:
     cid = uuid5_for("is_clientes", row.get("id"))
     if not cid:
         return None
-    razao = safe_str(row.get("razao_social"))
+    razao = safe_str(row.get("razao_social"), "razao_social")
     if not razao:
         # Fallback para não perder PJ legada com razão social vazia.
-        razao = safe_str(row.get("nome")) or safe_str(row.get("fantasia")) or safe_str(row.get("cnpj"))
+        razao = (
+            safe_str(row.get("nome"), "nome")
+            or safe_str(row.get("fantasia"), "fantasia")
+            or safe_str(row.get("cnpj"))
+        )
     if not razao:
         return None  # CHECK constraint: razao_social IS NOT NULL
     return {
         "cliente_id": cid,
         "razao_social": razao,
-        "fantasia": safe_str(row.get("fantasia")),
+        "fantasia": safe_str(row.get("fantasia"), "fantasia"),
         "ie": to_str(row.get("ie")),
         "cnpj": to_str(row.get("cnpj")),
     }
@@ -829,7 +1103,7 @@ def transform_pedidos_fretes_entregas(row: dict) -> Optional[dict]:
         "id": new_id,
         "pedido_id": pedido_id,
         "envio_id": None,
-        "metodo_titulo": tipo,
+        "metodo_titulo": safe_str(tipo, "titulo"),
         "modulo": None,
         "prazo_dias": None,
         "valor": None,
@@ -844,11 +1118,20 @@ def transform_pedidos_fretes_entregas(row: dict) -> Optional[dict]:
         try:
             d = json.loads(detalhes_raw)
             if isinstance(d, dict):
-                result["metodo_titulo"] = d.get("titulo") or tipo
+                result["metodo_titulo"] = safe_str(d.get("titulo") or tipo, "titulo")
+                result["modulo"] = safe_str(d.get("modulo"))
                 result["prazo_dias"] = to_int(d.get("prazo")) or to_int(d.get("prazo_dias"))
                 result["valor"] = to_decimal(d.get("custo")) or to_decimal(d.get("valor"))
+                result["sucesso"] = to_bool(d.get("sucesso") if "sucesso" in d else d.get("status"))
+                result["hash"] = safe_str(d.get("hash"))
+                result["created_at"] = to_ts(d.get("data") or d.get("created_at"))
         except (json.JSONDecodeError, TypeError):
             pass
+
+    if result["prazo_dias"] is not None and result["prazo_dias"] < 0:
+        result["prazo_dias"] = None
+    if result["valor"] is not None and result["valor"] < 0:
+        result["valor"] = None
 
     return result
 
@@ -898,7 +1181,8 @@ def transform_pagamento(row: dict) -> Optional[dict]:
             s = to_str(val)
             if s:
                 m = re.search(r"(\d+)", s)
-                new_row["parcelas_qtd"] = int(m.group(1)) if m else None
+                parcelas_qtd = int(m.group(1)) if m else None
+                new_row["parcelas_qtd"] = parcelas_qtd if parcelas_qtd and parcelas_qtd >= 1 else None
             else:
                 new_row["parcelas_qtd"] = None
             continue
@@ -976,7 +1260,7 @@ def pg_upsert(
     if not batch:
         return 0, 0
 
-    columns = list(batch[0].keys())
+    columns = [c for c in batch[0].keys() if not c.startswith("__")]
     conflict_cols = [c.strip() for c in conflict_col.split(",")]
     update_cols = [c for c in columns if c not in conflict_cols]
 
@@ -992,10 +1276,7 @@ def pg_upsert(
     else:
         # Modo padrão (insert): usado no nightly após truncate.
         # É significativamente mais rápido que upsert com DO UPDATE.
-        sql = (
-            f'INSERT INTO public."{table}" ({cols_quoted}) VALUES %s '
-            f'ON CONFLICT ({conflict_quoted}) DO NOTHING'
-        )
+        sql = f'INSERT INTO public."{table}" ({cols_quoted}) VALUES %s'
 
     jsonb_cols = {c for c in columns if c.endswith("_json")}
 
@@ -1027,9 +1308,11 @@ def pg_upsert(
         if len(err_str) > 300:
             err_str = err_str[:300] + "..."
         log(f"    Batch error ({table}): {err_str}", "WARN")
+        record_etl_error(table, None, str(batch_err), stage="batch_insert")
         # Fallback: row-by-row
         ok, err = 0, 0
-        for row_vals in values:
+        for source_row, row_vals in zip(batch, values):
+            legacy_id = source_row.get("__legacy_id")
             try:
                 with conn.cursor() as cur:
                     execute_values(cur, sql, [row_vals], page_size=1)
@@ -1039,6 +1322,7 @@ def pg_upsert(
                 conn.rollback()
                 if err < 3:
                     log(f"    Row error: {str(row_e)[:200]}", "WARN")
+                record_etl_error(table, legacy_id, str(row_e), stage="row_insert")
                 err += 1
         return ok, err
 
@@ -1056,20 +1340,30 @@ def pg_flush(conn, table, batch, conflict_col, ok, err):
 # ============================================================================
 def run_precheck(mysql_cursor) -> bool:
     """
-    Valida transformações sem escrever no Supabase.
-    Retorna True se passar, False em inconsistência crítica.
+    Valida transformações sem escrita no Supabase.
+    Retorna True quando todas as verificações críticas passam.
     """
     log("PRECHECK: validando transformações (sem escrita)...")
     passed = True
 
-    # 1) Clientes PF/PJ + deduplicação por email (mesma regra do ETL)
+    mapping_errors = validate_mapping_contract(mysql_cursor)
+    if mapping_errors:
+        passed = False
+        for item in mapping_errors[:30]:
+            log(f"PRECHECK FAIL [mapping]: {item}", "ERROR")
+        if len(mapping_errors) > 30:
+            log(f"PRECHECK FAIL [mapping]: ... +{len(mapping_errors) - 30} erros", "ERROR")
+
     mysql_cursor.execute("SELECT * FROM `is_clientes` ORDER BY `id`")
     rows = mysql_cursor.fetchall()
     seen_emails: Dict[str, int] = {}
     kept = pf = pj = dropped_split = 0
-
     for row in rows:
-        base = transform_cliente(row)
+        try:
+            base = transform_cliente(row)
+        except Exception:
+            dropped_split += 1
+            continue
         if not base:
             continue
         email = (base.get("email_log") or "").strip().lower()
@@ -1082,32 +1376,45 @@ def run_precheck(mysql_cursor) -> bool:
             pj += 1
         else:
             dropped_split += 1
-
     dup_emails = sum(1 for _, n in seen_emails.items() if n > 1)
-    log(f"PRECHECK clientes: source={len(rows):,} kept={kept:,} PF={pf:,} PJ={pj:,} split_drop={dropped_split:,} dup_emails={dup_emails:,}")
+    log(
+        f"PRECHECK clientes: source={len(rows):,} kept={kept:,} PF={pf:,} "
+        f"PJ={pj:,} split_drop={dropped_split:,} dup_emails={dup_emails:,}"
+    )
     if dropped_split > 0:
         passed = False
         log("PRECHECK FAIL: clientes sem classificação PF/PJ após transformação", "ERROR")
 
-    # 2) Cupons: tipo e produtos CSV
-    mysql_cursor.execute("SELECT `id`,`tipo`,`valor`,`produtos`,`cliente`,`codigo`,`uso`,`limite`,`inicio`,`fim`,`pedido_min`,`primeira_compra`,`arquivado` FROM `is_mkt_cupons`")
+    expected_pf_min = int(os.getenv("PRECHECK_MIN_CLIENTES_PF", "4589"))
+    expected_pj_min = int(os.getenv("PRECHECK_MIN_CLIENTES_PJ", "3021"))
+    if pf < expected_pf_min:
+        passed = False
+        log(f"PRECHECK FAIL: PF abaixo do mínimo esperado ({pf} < {expected_pf_min})", "ERROR")
+    if pj < expected_pj_min:
+        passed = False
+        log(f"PRECHECK FAIL: PJ abaixo do mínimo esperado ({pj} < {expected_pj_min})", "ERROR")
+
+    mysql_cursor.execute(
+        "SELECT `id`,`tipo`,`valor`,`produtos`,`cliente`,`codigo`,`uso`,`limite`,`inicio`,`fim`,`pedido_min`,`primeira_compra`,`arquivado` FROM `is_mkt_cupons`"
+    )
     cup_rows = mysql_cursor.fetchall()
-    tipo_invalid = 0
-    links = 0
+    cupom_tipo_invalid = 0
+    cupom_links = 0
     for row in cup_rows:
-        t = transform_row(row, "is_mkt_cupons", COLUMN_MAPPING["is_mkt_cupons"])
-        if not t or t.get("tipo") not in ("amount", "percent"):
-            tipo_invalid += 1
-        links += len(transform_cupom_produtos(row))
-    log(f"PRECHECK cupons: source={len(cup_rows):,} tipo_invalid={tipo_invalid:,} links_produtos={links:,}")
-    if tipo_invalid > 0:
+        transformed = transform_row(row, "is_mkt_cupons", COLUMN_MAPPING["is_mkt_cupons"])
+        if not transformed or transformed.get("tipo") not in ("amount", "percent"):
+            cupom_tipo_invalid += 1
+        cupom_links += len(transform_cupom_produtos(row))
+    log(
+        f"PRECHECK cupons: source={len(cup_rows):,} tipo_invalid={cupom_tipo_invalid:,} links_produtos={cupom_links:,}"
+    )
+    if cupom_tipo_invalid > 0:
         passed = False
         log("PRECHECK FAIL: mapeamento de tipo de cupons inválido", "ERROR")
 
-    # 3) Categorias: pai -> chave
     mysql_cursor.execute("SELECT `id`,`chave`,`pai` FROM `is_produtos_categorias`")
     cat_rows = mysql_cursor.fetchall()
-    chave_map = {str(r.get('chave')).strip(): r.get("id") for r in cat_rows if r.get("chave")}
+    chave_map = {str(r.get("chave")).strip(): r.get("id") for r in cat_rows if r.get("chave")}
     missing_parent = with_parent = 0
     for row in cat_rows:
         pai = str(row.get("pai") or "").strip()
@@ -1120,10 +1427,52 @@ def run_precheck(mysql_cursor) -> bool:
         passed = False
         log("PRECHECK FAIL: categorias com pai não resolvido por chave", "ERROR")
 
-    # 4) Endereços: tabela + derivados
+    mysql_cursor.execute("SELECT `id`,`tipo`,`valor`,`status` FROM `is_financeiro_lancamentos`")
+    fin_rows = mysql_cursor.fetchall()
+    fin_tipo_invalid = 0
+    for row in fin_rows:
+        try:
+            mapped_tipo = transform_column(
+                "tipo",
+                "tipo",
+                row.get("tipo"),
+                "is_financeiro_lancamentos",
+                TABLE_TYPE_OVERRIDES.get("is_financeiro_lancamentos", {}),
+            )
+            if mapped_tipo not in (1, 2):
+                fin_tipo_invalid += 1
+        except Exception:
+            fin_tipo_invalid += 1
+    log(f"PRECHECK financeiro: source={len(fin_rows):,} tipo_invalid={fin_tipo_invalid:,}")
+    if fin_tipo_invalid > 0:
+        passed = False
+        log("PRECHECK FAIL: tipo financeiro inválido após transformação", "ERROR")
+    expected_fin_min = int(os.getenv("PRECHECK_MIN_FINANCEIRO_LANCAMENTOS", "97985"))
+    if len(fin_rows) < expected_fin_min:
+        passed = False
+        log(
+            f"PRECHECK FAIL: financeiro_lancamentos abaixo do mínimo esperado ({len(fin_rows)} < {expected_fin_min})",
+            "ERROR",
+        )
+
+    mysql_cursor.execute("SELECT `id`,`parcelas` FROM `is_pedidos_pagamentos`")
+    pag_rows = mysql_cursor.fetchall()
+    parcelas_invalid = 0
+    for row in pag_rows:
+        transformed = transform_pagamento({"id": row.get("id"), "parcelas": row.get("parcelas")})
+        qty = transformed.get("parcelas_qtd") if transformed else None
+        if qty is not None and qty < 1:
+            parcelas_invalid += 1
+    log(f"PRECHECK pagamentos: source={len(pag_rows):,} parcelas_invalid={parcelas_invalid:,}")
+    if parcelas_invalid > 0:
+        passed = False
+        log("PRECHECK FAIL: parcelas_qtd inválido (<1)", "ERROR")
+
     mysql_cursor.execute("SELECT COUNT(*) c FROM `is_clientes_enderecos`")
     end_table = mysql_cursor.fetchone()["c"]
-    mysql_cursor.execute("SELECT COUNT(*) c FROM `is_clientes` WHERE TRIM(COALESCE(`cep`,''))<>'' OR TRIM(COALESCE(`logradouro`,''))<>''")
+    mysql_cursor.execute(
+        "SELECT COUNT(*) c FROM `is_clientes` WHERE TRIM(COALESCE(`cep`,''))<>'' OR TRIM(COALESCE(`logradouro`,''))<>''"
+    )
     end_derived = mysql_cursor.fetchone()["c"]
     log(f"PRECHECK endereços: tabela={end_table:,} derivados_de_clientes={end_derived:,}")
 
@@ -1134,6 +1483,7 @@ def run_precheck(mysql_cursor) -> bool:
 
 def run_etl():
     global VALID_FK_IDS
+    ETL_ERRORS.clear()
     log("=" * 70)
     log("ETL v11 — MySQL legado → Supabase (psycopg2 direto)")
     log("=" * 70)
@@ -1159,6 +1509,13 @@ def run_etl():
         cursor = mysql.cursor(dictionary=True)
         log("Conexão MySQL OK")
         VALID_FK_IDS = build_valid_fk_ids(cursor)
+        mapping_errors = validate_mapping_contract(cursor)
+        if mapping_errors:
+            for item in mapping_errors[:30]:
+                log(f"Startup mapping validation FAIL: {item}", "ERROR")
+            if len(mapping_errors) > 30:
+                log(f"Startup mapping validation FAIL: ... +{len(mapping_errors) - 30} erros", "ERROR")
+            raise RuntimeError("mapping validation failed before load")
         pg = get_pg()
         log("Conexão PostgreSQL OK")
     except Exception as e:
@@ -1320,6 +1677,7 @@ def run_etl():
                     pg.rollback()
                     if err2 < 3:
                         log(f"    2-pass err: {str(e)[:200]}", "WARN")
+                    record_etl_error(table, u.get("__legacy_id"), str(e), stage="self_ref_update")
                     err2 += 1
             log(f"  → 2-pass OK={ok2:,}  ERR={err2:,}")
 
@@ -1331,6 +1689,7 @@ def run_etl():
 
     total_ok = sum(s["ok"] for s in stats.values())
     total_err = sum(s["err"] for s in stats.values())
+    total_err += sum(1 for item in ETL_ERRORS if item.get("stage") == "self_ref_update")
 
     for t in EXEC_ORDER:
         if t in stats:
@@ -1345,8 +1704,12 @@ def run_etl():
     mysql.close()
     pg.close()
 
+    if total_err > 0 or ETL_ERRORS:
+        write_etl_error_report(total_err)
+
     if total_err > 0:
-        log(f"  ⚠ {total_err} erros encontrados — verifique os logs acima", "WARN")
+        log(f"  FAIL-FAST: {total_err} erros encontrados", "ERROR")
+        raise RuntimeError(f"ETL failed with {total_err} row-level errors")
 
     log("")
     log("ETL COMPLETO!")
@@ -1396,11 +1759,15 @@ def _process_clientes(cursor, pg, seen_emails, pf_list, pj_list, addr_list):
 
                 # PF ou PJ
                 pf = transform_cliente_pf(row)
+                pj = transform_cliente_pj(row)
                 if pf:
                     pf_list.append(pf)
-                pj = transform_cliente_pj(row)
-                if pj:
+                elif pj:
                     pj_list.append(pj)
+                else:
+                    raise ValueError(
+                        f"cliente sem split PF/PJ (id={row.get('id')}, tipo={row.get('tipo')!r})"
+                    )
 
                 # Endereço padrão
                 addr = transform_cliente_endereco_from_cliente(row)
@@ -1409,6 +1776,7 @@ def _process_clientes(cursor, pg, seen_emails, pf_list, pj_list, addr_list):
             except Exception as e:
                 if err < 5:
                     log(f"    Err cliente {row.get('id')}: {e}", "WARN")
+                record_etl_error("is_clientes", row.get("id"), str(e), stage="transform")
                 err += 1
 
         if len(batch) >= BATCH_SIZE:
@@ -1452,7 +1820,8 @@ def _process_clientes_enderecos(cursor, pg, addr_from_clientes):
                 t_row = transform_row(row, "is_clientes_enderecos", mapping)
                 if t_row and t_row.get("id"):
                     batch.append(t_row)
-            except Exception:
+            except Exception as e:
+                record_etl_error("is_clientes_enderecos", row.get("id"), str(e), stage="transform")
                 err += 1
 
         if len(batch) >= BATCH_SIZE:
@@ -1506,6 +1875,7 @@ def _process_mkt_cupons(cursor, pg, cupons_produtos_list):
         except Exception as e:
             if err < 5:
                 log(f"    Err cupom {row.get('id')}: {e}", "WARN")
+            record_etl_error("is_mkt_cupons", row.get("id"), str(e), stage="transform")
             err += 1
 
     batch, ok, err = pg_flush(pg, "is_mkt_cupons", batch, "id", ok, err)
@@ -1555,6 +1925,7 @@ def _process_categorias(cursor, pg, slug_map):
         except Exception as e:
             if err < 3:
                 log(f"    Err cat {row.get('id')}: {e}", "WARN")
+            record_etl_error("is_produtos_categorias", row.get("id"), str(e), stage="transform")
             err += 1
 
     # Insert sem parent_id primeiro, depois update
@@ -1590,6 +1961,7 @@ def _process_categorias(cursor, pg, slug_map):
         except Exception as e:
             pg.rollback()
             log(f"  → parent_id ERRO: {str(e)[:200]}", "WARN")
+            record_etl_error("is_produtos_categorias", None, str(e), stage="self_ref_update")
 
     return ok, err
 
@@ -1614,7 +1986,8 @@ def _process_fretes_entregas(cursor, pg):
                 t_row = transform_pedidos_fretes_entregas(row)
                 if t_row:
                     batch.append(t_row)
-            except Exception:
+            except Exception as e:
+                record_etl_error("is_pedidos_fretes_entregas", row.get("id"), str(e), stage="transform")
                 err += 1
         if len(batch) >= BATCH_SIZE:
             batch, ok, err = pg_flush(pg, "is_pedidos_fretes_entregas", batch, "id", ok, err)
@@ -1651,6 +2024,7 @@ def _process_pedidos(cursor, pg, cupom_codigos):
             except Exception as e:
                 if err < 5:
                     log(f"    Err pedido {row.get('id')}: {e}", "WARN")
+                record_etl_error("is_pedidos", row.get("id"), str(e), stage="transform")
                 err += 1
         if len(batch) >= BATCH_SIZE:
             batch, ok, err = pg_flush(pg, "is_pedidos", batch, "id", ok, err)
@@ -1696,6 +2070,7 @@ def _process_pagamentos(cursor, pg, self_ref_data):
             except Exception as e:
                 if err < 5:
                     log(f"    Err pag {row.get('id')}: {e}", "WARN")
+                record_etl_error("is_pedidos_pagamentos", row.get("id"), str(e), stage="transform")
                 err += 1
         if len(batch) >= BATCH_SIZE:
             batch, ok, err = pg_flush(pg, "is_pedidos_pagamentos", batch, "id", ok, err)
@@ -1741,7 +2116,8 @@ def _process_generic(cursor, pg, table, mysql_table, mapping, conflict_col, self
                         )
                         t_row[self_ref_col] = None
                     batch.append(t_row)
-            except Exception:
+            except Exception as e:
+                record_etl_error(table, row.get("id"), str(e), stage="transform")
                 err += 1
         if len(batch) >= BATCH_SIZE:
             batch, ok, err = pg_flush(pg, table, batch, conflict_col, ok, err)
