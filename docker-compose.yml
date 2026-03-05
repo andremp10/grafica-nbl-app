@@ -3,10 +3,10 @@ services:
     image: mysql:5.7
     container_name: supabase-migration-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: root
-      MYSQL_DATABASE: nblgrafica_app
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-root}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-nblgrafica_app}
     ports:
-      - "3307:3306"
+      - "${MYSQL_PORT:-3307}:3306"
     volumes:
       - ./sql_input:/sql_input:ro
       - mysql_data:/var/lib/mysql
@@ -14,7 +14,7 @@ services:
       --character-set-server=latin1 --collation-server=latin1_swedish_ci --max_allowed_packet=512M
       --wait_timeout=86400 --interactive_timeout=86400 --net_read_timeout=86400 --net_write_timeout=86400
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-proot"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_PASSWORD:-root}"]
       interval: 10s
       timeout: 5s
       retries: 30

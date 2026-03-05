@@ -247,6 +247,32 @@ def _fetch_ftp(target_date: date | None, dest_dir: Path, use_tls: bool = False) 
     return local_path
 
 
+BACKUP_RETENTION_DAYS = int(_clean_env(os.getenv("BACKUP_RETENTION_DAYS", "7")))
+
+
+def _purge_old_backups(keep_days: int) -> None:
+    """Remove backups locais com data anterior a keep_days dias."""
+    if keep_days <= 0:
+        return
+    cutoff = date.today()
+    removed = 0
+    for f in LOCAL_DIR.glob(f"{PREFIX}*{EXT}"):
+        m = DATE_PATTERN.match(f.name)
+        if not m:
+            continue
+        file_date = date.fromisoformat(m.group(1))
+        age = (cutoff - file_date).days
+        if age > keep_days:
+            try:
+                f.unlink()
+                log.info("Backup antigo removido (age=%dd): %s", age, f.name)
+                removed += 1
+            except OSError as exc:
+                log.warning("Não foi possível remover %s: %s", f.name, exc)
+    if removed:
+        log.info("Retenção: %d arquivo(s) antigo(s) removido(s) (política: %dd).", removed, keep_days)
+
+
 def fetch_backup(target_date: date | None = None) -> Path:
     LOCAL_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -258,15 +284,20 @@ def fetch_backup(target_date: date | None = None) -> Path:
     errors: list[str] = []
 
     if protocol == "ftp":
-        return _fetch_ftp(target_date, LOCAL_DIR, use_tls=False).resolve()
+        path = _fetch_ftp(target_date, LOCAL_DIR, use_tls=False).resolve()
+        _purge_old_backups(BACKUP_RETENTION_DAYS)
+        return path
 
     if protocol == "ftps":
-        return _fetch_ftp(target_date, LOCAL_DIR, use_tls=True).resolve()
+        path = _fetch_ftp(target_date, LOCAL_DIR, use_tls=True).resolve()
+        _purge_old_backups(BACKUP_RETENTION_DAYS)
+        return path
 
     # protocol == sftp: fallback to ftp
     try:
         path = _fetch_sftp(target_date, LOCAL_DIR)
         log.info("Backup fetched via SFTP: %s", path.resolve())
+        _purge_old_backups(BACKUP_RETENTION_DAYS)
         return path.resolve()
     except Exception as exc:
         msg = f"SFTP failed: {exc}"
@@ -276,6 +307,7 @@ def fetch_backup(target_date: date | None = None) -> Path:
     try:
         path = _fetch_ftp(target_date, LOCAL_DIR, use_tls=False)
         log.info("Backup fetched via FTP fallback: %s", path.resolve())
+        _purge_old_backups(BACKUP_RETENTION_DAYS)
         return path.resolve()
     except Exception as exc:
         msg = f"FTP failed: {exc}"

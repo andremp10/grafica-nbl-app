@@ -1,5 +1,5 @@
-python-dotenv
-mysql-connector-python
-supabase
-psycopg2-binary
-paramiko
+python-dotenv>=1.0.1
+mysql-connector-python>=8.4.0
+supabase>=2.4.0
+psycopg2-binary>=2.9.9
+paramiko>=3.4.0

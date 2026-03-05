@@ -21,6 +21,7 @@ jobs:
       BACKUP_FILENAME_PREFIX: 'nblgrafica_app-'
       BACKUP_EXTENSION: '.sql'
       BACKUP_LOCAL_DIR: './backups'
+      BACKUP_RETENTION_DAYS: '7'
       MYSQL_HOST: '127.0.0.1'
       MYSQL_PORT: '3307'
       MYSQL_USER: 'root'
@@ -142,6 +143,7 @@ jobs:
           BACKUP_FILENAME_PREFIX: 'nblgrafica_app-'
           BACKUP_EXTENSION: '.sql'
           BACKUP_LOCAL_DIR: './backups'
+          BACKUP_RETENTION_DAYS: '7'
           BACKUP_SFTP_HOST: ${{ secrets.BACKUP_SFTP_HOST }}
           BACKUP_SFTP_PORT: '22'
           BACKUP_SFTP_USER: ${{ secrets.BACKUP_SFTP_USER }}
