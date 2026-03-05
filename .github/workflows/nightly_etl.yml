@@ -35,6 +35,7 @@ jobs:
       DOCKER_COMPOSE_FILE: 'docker-compose.yml'
       SQL_INPUT_DIR: './sql_input'
       LOGS_DIR: './logs'
+      PYTHONUNBUFFERED: '1'
       VERIFY_TABLES: 'is_pedidos,is_clientes'
       VERIFY_MIN_ROWS: '1'
       VERIFY_RECENCY_TABLE: 'is_pedidos'

@@ -206,6 +206,15 @@ def run_daily_job(
         else:
             _run_step("2. Import dump MySQL", manifest, steps, lambda: import_dump(backup_path))
 
+        # Validação obrigatória de transformação ANTES do truncate.
+        # Garante fail-fast: se transformação estiver errada, não limpa o Supabase.
+        _run_step(
+            "2.5 Validate transformations (no write)",
+            manifest,
+            steps,
+            lambda: _run_etl(dry_run=True),
+        )
+
         if truncate_enabled and not dry_run:
             _run_step("3. Truncate Supabase", manifest, steps, lambda: truncate_supabase())
         else:
