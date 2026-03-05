@@ -13,7 +13,7 @@ jobs:
   etl:
     name: ETL Nightly (schedule)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       BACKUP_PROTOCOL: ${{ secrets.BACKUP_PROTOCOL }}
       BACKUP_REMOTE_DIR: '/var/lib/vz/dump'
@@ -26,7 +26,7 @@ jobs:
       MYSQL_USER: 'root'
       MYSQL_PASSWORD: 'root'
       MYSQL_DATABASE: 'nblgrafica_app'
-      ETL_BATCH_SIZE: '200'
+      ETL_BATCH_SIZE: '2000'
       ETL_RETRIES: '6'
       ETL_VALIDATE_ONLY: '0'
       TRUNCATE_ENABLED: '1'

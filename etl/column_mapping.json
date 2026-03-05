@@ -189,7 +189,6 @@
     "complemento": "complemento",
     "cidade": "cidade",
     "estado": "estado",
-    "is_principal": "is_principal",
     "created_at": "data"
   },
   "is_entregas_fretes_locais": {

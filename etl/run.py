@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-ETL v9 - Migração Definitiva MySQL → Supabase
-==============================================
+ETL v10 - Migracaoo MySQL -> Supabase (psycopg2 direto)
+========================================================
 
 COMO USAR:
 1. Configure o .env com as credenciais
 2. Execute: python etl/run.py
 
-Variáveis de controle:
-  ETL_VALIDATE_ONLY=1   → valida mapping vs schema e sai sem escrever
-  ETL_ONLY_TABLES=t1,t2 → roda apenas as tabelas listadas
-  ETL_BATCH_SIZE=200    → tamanho do batch de insert
+Variaveis de controle:
+  ETL_VALIDATE_ONLY=1   -> valida mapping vs schema e sai sem escrever
+  ETL_ONLY_TABLES=t1,t2 -> roda apenas as tabelas listadas
+  ETL_BATCH_SIZE=2000   -> tamanho do batch de insert
 """
 
 import os
@@ -29,19 +29,34 @@ if sys.platform == "win32":
 load_dotenv()
 
 # ============================================================================
-# CONFIGURAÇÃO
+# CONFIGURACAO
 # ============================================================================
 UUID_NS = uuid.UUID("2a6b2c31-0f2a-4dfd-8cde-7b4b9b3f1c5a")
-BATCH_SIZE = int(os.getenv("ETL_BATCH_SIZE", "200"))
+BATCH_SIZE = int(os.getenv("ETL_BATCH_SIZE", "2000"))
 VALIDATE_ONLY = os.getenv("ETL_VALIDATE_ONLY", "0") == "1"
 ONLY_TABLES_ENV = os.getenv("ETL_ONLY_TABLES", "").strip()
 ONLY_TABLES: Set[str] = set(t.strip() for t in ONLY_TABLES_ENV.split(",") if t.strip())
 
 # MySQL table name overrides: when Supabase table name differs from MySQL
 MYSQL_TABLE_NAME_MAP = {
-    # Supabase name → MySQL name (when they differ)
+    # Supabase name -> MySQL name (when they differ)
     "is_pedidos_fretes_entregas": "is_pedidos_fretes_envios",
 }
+
+# Per-table column type overrides (takes precedence over global BOOL_COLS/INT_COLS)
+# Fixes schema mismatches where a column name exists in multiple tables with different types
+TABLE_TYPE_OVERRIDES: Dict[str, Dict[str, str]] = {
+    "is_extras_status": {"visivel": "int"},                # schema: integer, not boolean
+    "is_mkt_cupons": {"tipo": "str"},                      # schema: varchar ('percent'/'amount')
+    "is_producao_setores": {"status": "str"},              # schema: varchar, not integer
+    "is_pedidos_itens": {"status": "str"},                 # schema: varchar, not integer
+    "is_pedidos_pagamentos": {"visto": "bool"},            # schema: boolean, not integer
+    "is_produtos": {"valor": "str"},                       # schema: varchar (display text)
+    "is_financeiro_lancamentos": {"valor": "money"},       # schema: CHECK (valor >= 0)
+}
+
+# Tables without an 'id' column in Supabase (composite PK)
+TABLES_WITHOUT_ID: Set[str] = {"is_mkt_cupons_produtos"}
 
 # ============================================================================
 # HELPERS
@@ -148,7 +163,7 @@ def clean_string(val: Any) -> Optional[str]:
 
 
 # ============================================================================
-# CONEXÕES
+# CONEXOES
 # ============================================================================
 def get_mysql():
     import mysql.connector
@@ -164,20 +179,21 @@ def get_mysql():
     )
 
 
-def get_supabase():
-    from supabase import create_client
-    url = os.getenv("SUPABASE_URL")
-    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_KEY")
-    if not url or not key:
-        raise ValueError("SUPABASE_URL e SUPABASE_SERVICE_ROLE_KEY são obrigatórios.")
-    return create_client(url, key)
+def get_pg():
+    """Connect directly to Supabase PostgreSQL via psycopg2."""
+    import psycopg2
+    db_url = os.getenv("SUPABASE_DB_URL")
+    if not db_url:
+        raise ValueError("SUPABASE_DB_URL is required for direct PostgreSQL connection")
+    conn = psycopg2.connect(db_url)
+    return conn
 
 
 # ============================================================================
 # MAPEAMENTOS DE TIPOS E FKs
 # ============================================================================
 
-# FK: coluna → tabela referenciada (usada para gerar UUID5)
+# FK: coluna -> tabela referenciada (usada para gerar UUID5)
 FK_MAP = {
     "cliente_id":       "is_clientes",
     "usuario_id":       "is_usuarios",
@@ -204,7 +220,7 @@ FK_MAP = {
     "caixa_id":         "_orphan",
     "centro_custo_id":  "_orphan",
     "arquivo_id":       "_orphan",
-    "envio_id":         "_orphan",   # UUID simples, não FK real
+    "envio_id":         "_orphan",   # UUID simples, nao FK real
     # Self-reference tratada caso a caso
     "parent_id":        None,
 }
@@ -224,14 +240,14 @@ TS_COLS = {
     "vencimento", "data_pagto", "data_emissao", "emissao", "saida",
 }
 
-# Colunas MONEY (valores não negativos)
+# Colunas MONEY (valores nao negativos)
 MONEY_COLS = {
     "total", "acrescimo", "desconto", "desconto_uso", "sinal",
     "frete_valor", "taxa", "custo", "salario", "vale",
     "valor_arte", "min_compra", "saldo_inicial",
 }
 
-# Colunas INT (não UUID, não bool, não timestamp)
+# Colunas INT (nao UUID, nao bool, nao timestamp)
 INT_COLS = {
     "status", "acesso", "tipo", "origem", "repetir", "agrupar", "neutro",
     "arte_status", "visto", "categoria", "revendedor", "revenda_tipo",
@@ -243,11 +259,12 @@ INT_COLS = {
 }
 
 # ============================================================================
-# ORDEM TOPOLÓGICA — 30 tabelas ETL (novo schema)
+# ORDEM TOPOLOGICA -- 30 tabelas ETL (novo schema)
+# Respeita todas as FKs do schema_ref.sql
 # ============================================================================
 EXEC_ORDER = [
-    # Nível 0: sem dependências
-    "is_extras_status",            # PK INT — tratamento especial
+    # Nivel 0: sem dependencias
+    "is_extras_status",            # PK INT -- tratamento especial
     "is_entregas_balcoes",
     "is_entregas_fretes",
     "is_financeiro_funcionarios",
@@ -256,7 +273,7 @@ EXEC_ORDER = [
     "is_produtos",
     "is_produtos_vars_nomes",
     "is_clientes",
-    # Nível 1
+    # Nivel 1
     "is_usuarios",                 # dep: is_entregas_balcoes
     "is_clientes_pf",              # dep: is_clientes | conflict: cliente_id
     "is_clientes_pj",              # dep: is_clientes | conflict: cliente_id
@@ -265,19 +282,19 @@ EXEC_ORDER = [
     "is_produtos_categorias",      # self-ref: 2-pass para parent_id
     "is_produtos_vars",            # dep: is_produtos, is_produtos_vars_nomes
     "is_produtos_categorias_extras",  # dep: is_produtos
-    # Nível 2
+    # Nivel 2
     "is_mkt_cupons",               # dep: is_clientes
     "is_mkt_cupons_produtos",      # dep: is_mkt_cupons, is_produtos | PK composto
     "is_financeiro_lancamentos",   # dep: is_financeiro_funcionarios, is_usuarios
     "is_pedidos",                  # dep: is_clientes, is_usuarios, is_entregas_balcoes,
-                                   #      is_clientes_enderecos, is_mkt_cupons
-    # Nível 3
+                                   #      is_clientes_enderecos, is_mkt_cupons(codigo)
+    # Nivel 3
     "is_pedidos_fretes_detalhes",  # dep: is_pedidos
     "is_pedidos_fretes_entregas",  # dep: is_pedidos
     "is_pedidos_itens",            # dep: is_pedidos, is_produtos
     "is_pedidos_pagamentos",       # dep: is_clientes, is_pedidos, is_usuarios (self-ref: 2-pass)
     "is_usuarios_historico",       # dep: is_usuarios, is_clientes
-    # Nível 4
+    # Nivel 4
     "is_clientes_extratos",        # dep: is_clientes, is_pedidos, is_pedidos_pagamentos
     "is_pedidos_historico",        # dep: is_pedidos, is_pedidos_itens, is_extras_status, is_usuarios
     "is_pedidos_itens_reprovados", # dep: is_pedidos_itens, is_usuarios
@@ -299,7 +316,7 @@ SELF_REF_TABLES: Dict[str, str] = {
 
 
 # ============================================================================
-# TRANSFORMAÇÕES
+# TRANSFORMACOES
 # ============================================================================
 def transform_row(
     row: dict, table: str, mapping: Dict[str, str]
@@ -308,15 +325,22 @@ def transform_row(
     new_row: dict = {}
     legacy_id = row.get("id")
 
-    # PK especial: is_extras_status usa INT, não UUID
-    if table == "is_extras_status":
+    # PK handling: tables without 'id' column use composite PK
+    if table in TABLES_WITHOUT_ID:
+        # No 'id' column in Supabase - don't generate one
+        if not legacy_id:
+            return None  # Still validate row exists in MySQL
+    elif table == "is_extras_status":
         new_row["id"] = to_int(legacy_id)
         if new_row["id"] is None:
             return None
     elif legacy_id:
         new_row["id"] = uuid5_for(table, legacy_id)
     else:
-        return None  # Sem ID válido
+        return None  # Sem ID valido
+
+    # Per-table type overrides
+    overrides = TABLE_TYPE_OVERRIDES.get(table, {})
 
     for pg_col, mysql_col in mapping.items():
         if pg_col == "id":
@@ -324,9 +348,26 @@ def transform_row(
 
         val = row.get(mysql_col)
 
-        # --- FK columns → UUID5 ---
+        # --- Per-table type override (highest priority) ---
+        override = overrides.get(pg_col)
+        if override:
+            if override == "int":
+                new_row[pg_col] = to_int(val)
+            elif override == "bool":
+                new_row[pg_col] = to_bool(val)
+            elif override == "str":
+                new_row[pg_col] = to_str(val)
+            elif override == "money":
+                new_row[pg_col] = to_money(val)
+            elif override == "decimal":
+                new_row[pg_col] = to_decimal(val)
+            elif override == "ts":
+                new_row[pg_col] = to_ts(val)
+            continue
+
+        # --- FK columns -> UUID5 ---
         if pg_col.endswith("_id"):
-            # status_id é INT (references is_extras_status)
+            # status_id e INT (references is_extras_status)
             if pg_col == "status_id":
                 new_row[pg_col] = to_int(val)
                 continue
@@ -334,11 +375,11 @@ def transform_row(
             ref = FK_MAP.get(pg_col)
 
             if ref is None:
-                # Self-reference: usa a própria tabela
+                # Self-reference: usa a propria tabela
                 new_row[pg_col] = uuid5_for(table, val) if val else None
             elif ref == "_orphan":
-                # Tabela removida do schema: gera UUID5 arbitrário para preservar dado
-                orphan_table = pg_col[:-3] + "s"  # heurística: remove _id, pluraliza
+                # Tabela removida do schema: gera UUID5 arbitrario para preservar dado
+                orphan_table = pg_col[:-3] + "s"  # heuristica: remove _id, pluraliza
                 new_row[pg_col] = uuid5_for(orphan_table, val) if val else None
             else:
                 new_row[pg_col] = uuid5_for(ref, val) if val else None
@@ -363,17 +404,17 @@ def transform_row(
             new_row[pg_col] = to_ts(val)
             continue
 
-        # --- Money (não-negativo) ---
+        # --- Money (nao-negativo) ---
         if pg_col in MONEY_COLS:
             new_row[pg_col] = to_money(val)
             continue
 
-        # --- Integer explícito ---
+        # --- Integer explicito ---
         if pg_col in INT_COLS:
             new_row[pg_col] = to_int(val)
             continue
 
-        # --- Decimal por padrão para "valor", "saldo", "preco", "qtde" ---
+        # --- Decimal por padrao para "valor", "saldo", "preco", "qtde" ---
         if any(x in pg_col for x in ("valor", "preco", "saldo", "custo", "qtde",
                                       "taxa", "desconto", "acrescimo")):
             new_row[pg_col] = to_decimal(val)
@@ -382,7 +423,7 @@ def transform_row(
         # --- Fallback ---
         new_row[pg_col] = to_str(val) if isinstance(val, str) else val
 
-    # Limpar valores vazios problemáticos
+    # Limpar valores vazios problematicos
     if "cupom" in new_row and not new_row.get("cupom"):
         new_row["cupom"] = None
     if "sku" in new_row and new_row.get("sku") == "":
@@ -435,7 +476,7 @@ def transform_cliente_pj(row: dict) -> Optional[dict]:
 
 
 # ============================================================================
-# VALIDAÇÃO DE SCHEMA
+# VALIDACAO DE SCHEMA
 # ============================================================================
 def parse_schema_tables(schema_path: str) -> Dict[str, Set[str]]:
     """Parseia schema_ref.sql e retorna {tabela: {colunas}}."""
@@ -459,7 +500,7 @@ def parse_schema_tables(schema_path: str) -> Dict[str, Set[str]]:
                     if col_m:
                         cols.add(col_m.group(1))
     except FileNotFoundError:
-        log("schema_ref.sql não encontrado — validação de colunas desativada", "WARN")
+        log("schema_ref.sql nao encontrado -- validacao de colunas desativada", "WARN")
 
     return tables
 
@@ -469,29 +510,29 @@ def validate_mapping(mappings: dict, schema_tables: Dict[str, Set[str]]) -> bool
     ok = True
     schema_table_names = set(schema_tables.keys())
 
-    log("\n--- Validação de Mapping vs Schema ---")
+    log("\n--- Validacao de Mapping vs Schema ---")
 
     for table, col_map in mappings.items():
         if table not in schema_table_names:
-            log(f"  [MISS_TABLE] {table} não está no schema_ref.sql", "WARN")
+            log(f"  [MISS_TABLE] {table} nao esta no schema_ref.sql", "WARN")
             continue
 
         schema_cols = schema_tables[table]
         for pg_col in col_map:
             if pg_col not in schema_cols:
-                log(f"  [MISS_COL]  {table}.{pg_col} não existe no schema", "ERROR")
+                log(f"  [MISS_COL]  {table}.{pg_col} nao existe no schema", "ERROR")
                 ok = False
 
-    # Verificar que todas as tabelas do EXEC_ORDER têm mapping
+    # Verificar que todas as tabelas do EXEC_ORDER tem mapping
     for table in EXEC_ORDER:
         if table not in mappings:
-            log(f"  [NO_MAP]  {table} está no EXEC_ORDER mas não no mapping", "ERROR")
+            log(f"  [NO_MAP]  {table} esta no EXEC_ORDER mas nao no mapping", "ERROR")
             ok = False
 
     if ok:
-        log("  Validação OK — nenhum problema encontrado.")
+        log("  Validacao OK -- nenhum problema encontrado.")
     else:
-        log("  Validação FALHOU — corrija os erros acima.", "ERROR")
+        log("  Validacao FALHOU -- corrija os erros acima.", "ERROR")
 
     return ok
 
@@ -505,32 +546,83 @@ def load_mappings() -> dict:
         return json.load(f)
 
 
-def insert_batch(
-    supa, table: str, batch: list, conflict_col: str = "id"
+def pg_upsert(
+    conn, table: str, batch: list, conflict_col: str = "id"
 ) -> Tuple[int, int]:
-    """Insere um batch via UPSERT com fallback para inserção individual."""
+    """Batch upsert via psycopg2 execute_values -- ~100x faster than REST API."""
+    from psycopg2.extras import execute_values, Json
+
     if not batch:
         return 0, 0
+
+    columns = list(batch[0].keys())
+    conflict_cols = [c.strip() for c in conflict_col.split(",")]
+    update_cols = [c for c in columns if c not in conflict_cols]
+
+    cols_quoted = ", ".join(f'"{c}"' for c in columns)
+    conflict_quoted = ", ".join(f'"{c}"' for c in conflict_cols)
+
+    if update_cols:
+        update_set = ", ".join(f'"{c}" = EXCLUDED."{c}"' for c in update_cols)
+        sql = (
+            f'INSERT INTO public."{table}" ({cols_quoted}) VALUES %s '
+            f'ON CONFLICT ({conflict_quoted}) DO UPDATE SET {update_set}'
+        )
+    else:
+        sql = (
+            f'INSERT INTO public."{table}" ({cols_quoted}) VALUES %s '
+            f'ON CONFLICT ({conflict_quoted}) DO NOTHING'
+        )
+
+    # Detect JSONB columns (ending in _json but NOT plain "json" columns which are TEXT)
+    jsonb_cols = {c for c in columns if c.endswith("_json") and c != "json"}
+
+    # Build values list with proper type adaptation
+    values = []
+    for row in batch:
+        row_vals = []
+        for c in columns:
+            v = row[c]
+            if isinstance(v, (dict, list)):
+                row_vals.append(Json(v))
+            elif c in jsonb_cols and isinstance(v, str):
+                try:
+                    row_vals.append(Json(json.loads(v)))
+                except (json.JSONDecodeError, TypeError):
+                    row_vals.append(v)
+            else:
+                row_vals.append(v)
+        values.append(tuple(row_vals))
+
     try:
-        supa.table(table).upsert(batch, on_conflict=conflict_col).execute()
+        with conn.cursor() as cur:
+            execute_values(cur, sql, values, page_size=len(values))
+        conn.commit()
         return len(batch), 0
     except Exception:
+        conn.rollback()
+        # Fallback: individual row inserts
         ok, err = 0, 0
-        for item in batch:
+        for row_vals in values:
             try:
-                supa.table(table).upsert([item], on_conflict=conflict_col).execute()
+                with conn.cursor() as cur:
+                    execute_values(cur, sql, [row_vals], page_size=1)
+                conn.commit()
                 ok += 1
-            except Exception:
+            except Exception as row_e:
+                conn.rollback()
+                if err < 5:
+                    log(f"    Row error: {row_e}", "WARN")
                 err += 1
         return ok, err
 
 
-def flush_batch(
-    supa, table: str, batch: list, conflict_col: str, ok: int, err: int
+def pg_flush(
+    conn, table: str, batch: list, conflict_col: str, ok: int, err: int
 ) -> Tuple[list, int, int]:
-    """Faz flush de um batch e retorna batch vazio + totais acumulados."""
+    """Flush a batch via pg_upsert and return empty batch + accumulated totals."""
     if batch:
-        ins, e = insert_batch(supa, table, batch, conflict_col)
+        ins, e = pg_upsert(conn, table, batch, conflict_col)
         ok += ins
         err += e
     return [], ok, err
@@ -538,22 +630,22 @@ def flush_batch(
 
 def run_etl():
     log("=" * 60)
-    log("ETL v9 - Migração MySQL → Supabase")
+    log("ETL v10 - MySQL -> Supabase (psycopg2 direto)")
     log("=" * 60)
 
     # Carregar mapeamentos
     MAPPINGS = load_mappings()
     log(f"Mapeamentos carregados: {len(MAPPINGS)} tabelas")
 
-    # Caminho do schema de referência (um nível acima de etl/)
+    # Caminho do schema de referencia (um nivel acima de etl/)
     schema_path = os.path.join(os.path.dirname(__file__), "..", "schema_ref.sql")
     schema_tables = parse_schema_tables(schema_path)
     if schema_tables:
         log(f"Schema carregado: {len(schema_tables)} tabelas")
 
-    # Modo validação: valida e sai sem escrever
+    # Modo validacao: valida e sai sem escrever
     if VALIDATE_ONLY:
-        log("Modo ETL_VALIDATE_ONLY=1 — apenas validação, sem escrita.")
+        log("Modo ETL_VALIDATE_ONLY=1 -- apenas validacao, sem escrita.")
         valid = validate_mapping(MAPPINGS, schema_tables)
         sys.exit(0 if valid else 1)
 
@@ -561,11 +653,19 @@ def run_etl():
     try:
         mysql = get_mysql()
         cursor = mysql.cursor(dictionary=True)
-        supa = get_supabase()
-        log("Conexões estabelecidas (MySQL + Supabase)")
+        pg = get_pg()
+        log("Conexoes estabelecidas (MySQL + PostgreSQL direto)")
     except Exception as e:
-        log(f"ERRO de conexão: {e}", "ERROR")
+        log(f"ERRO de conexao: {e}", "ERROR")
         sys.exit(1)
+
+    # Desabilitar triggers de FK para evitar erros de ordem/orphans
+    # Isso permite inserir dados sem respeitar FKs durante o ETL,
+    # ja que a ordem topologica garante integridade no final
+    with pg.cursor() as cur:
+        cur.execute("SET session_replication_role = 'replica'")
+    pg.commit()
+    log("FK triggers desabilitados (session_replication_role=replica)")
 
     # Determinar tabelas a processar
     if ONLY_TABLES:
@@ -575,6 +675,7 @@ def run_etl():
         tables_to_process = [t for t in EXEC_ORDER if t in MAPPINGS]
 
     log(f"Tabelas a processar: {len(tables_to_process)}")
+    log(f"Batch size: {BATCH_SIZE}")
 
     stats: Dict[str, Dict[str, int]] = {}
     seen_emails: Set[str] = set()
@@ -588,12 +689,13 @@ def run_etl():
     for table in tables_to_process:
         mapping = MAPPINGS.get(table)
         if not mapping:
-            log(f"Sem mapping para {table} — skip", "WARN")
+            log(f"Sem mapping para {table} -- skip", "WARN")
             continue
 
         conflict_col = CONFLICT_COLS.get(table, "id")
         mysql_table = MYSQL_TABLE_NAME_MAP.get(table, table)
         self_ref_col = SELF_REF_TABLES.get(table)
+        has_id = table not in TABLES_WITHOUT_ID
 
         log(f"\n>>> [{table}]" + (f" (MySQL: {mysql_table})" if mysql_table != table else ""))
 
@@ -602,7 +704,7 @@ def run_etl():
         if "id" not in cols:
             cols.append("id")
 
-        # Colunas extras para clientes (PF/PJ são derivados)
+        # Colunas extras para clientes (PF/PJ sao derivados)
         if table == "is_clientes":
             for c in ["nome", "sobrenome", "nascimento", "cpf", "sexo",
                       "razao_social", "fantasia", "ie", "cnpj"]:
@@ -613,7 +715,7 @@ def run_etl():
             query = f"SELECT {','.join(f'`{c}`' for c in cols)} FROM `{mysql_table}`"
             cursor.execute(query)
         except Exception as e:
-            log(f"    SKIP (não existe no MySQL): {e}", "WARN")
+            log(f"    SKIP (nao existe no MySQL): {e}", "WARN")
             stats[table] = {"ok": 0, "err": 0}
             continue
 
@@ -644,8 +746,8 @@ def run_etl():
                     else:
                         t_row = transform_row(row, table, mapping)
 
-                    if t_row and t_row.get("id") is not None:
-                        # Para 2-pass: salvar valor do self-ref e zerá-lo no pass 1
+                    if t_row and (not has_id or t_row.get("id") is not None):
+                        # Para 2-pass: salvar valor do self-ref e zera-lo no pass 1
                         if self_ref_col and t_row.get(self_ref_col):
                             self_ref_data[table].append(
                                 {"id": t_row["id"], self_ref_col: t_row[self_ref_col]}
@@ -659,9 +761,9 @@ def run_etl():
                     err += 1
 
             if len(batch) >= BATCH_SIZE:
-                batch, ok, err = flush_batch(supa, table, batch, conflict_col, ok, err)
+                batch, ok, err = pg_flush(pg, table, batch, conflict_col, ok, err)
 
-        batch, ok, err = flush_batch(supa, table, batch, conflict_col, ok, err)
+        batch, ok, err = pg_flush(pg, table, batch, conflict_col, ok, err)
         log(f"    OK={ok}, ERR={err}")
         stats[table] = {"ok": ok, "err": err}
 
@@ -673,11 +775,18 @@ def run_etl():
         if sub_list and (not ONLY_TABLES or sub_table in ONLY_TABLES):
             log(f"\n>>> [{sub_table}] ({len(sub_list)} registros)")
             valid = [p for p in sub_list if p.get("cliente_id")]
-            ins, e = insert_batch(supa, sub_table, valid, sub_conflict)
-            log(f"    OK={ins}, ERR={e}")
-            stats[sub_table] = {"ok": ins, "err": e}
+            sub_ok, sub_err = 0, 0
+            for i in range(0, len(valid), BATCH_SIZE):
+                chunk = valid[i:i + BATCH_SIZE]
+                ins, e = pg_upsert(pg, sub_table, chunk, sub_conflict)
+                sub_ok += ins
+                sub_err += e
+            log(f"    OK={sub_ok}, ERR={sub_err}")
+            stats[sub_table] = {"ok": sub_ok, "err": sub_err}
 
-    # ---- Pass 2: resolver self-references ----
+    # ---- Pass 2: resolver self-references via psycopg2 ----
+    from psycopg2.extras import execute_batch as pg_execute_batch
+
     for table, col in SELF_REF_TABLES.items():
         updates = self_ref_data.get(table, [])
         if not updates:
@@ -685,15 +794,36 @@ def run_etl():
         if ONLY_TABLES and table not in ONLY_TABLES:
             continue
         log(f"\n>>> [2-pass self-ref {table}.{col}] ({len(updates)} registros)")
-        ok2, err2 = 0, 0
-        for upd in updates:
-            try:
-                supa.table(table).update({col: upd[col]}).eq("id", upd["id"]).execute()
-                ok2 += 1
-            except Exception as e:
-                log(f"    Erro 2-pass {upd['id']}: {e}", "WARN")
-                err2 += 1
+        update_sql = f'UPDATE public."{table}" SET "{col}" = %s WHERE "id" = %s'
+        update_vals = [(upd[col], upd["id"]) for upd in updates]
+        try:
+            with pg.cursor() as cur:
+                pg_execute_batch(cur, update_sql, update_vals, page_size=500)
+            pg.commit()
+            ok2 = len(updates)
+            err2 = 0
+        except Exception:
+            pg.rollback()
+            # Fallback: individual updates
+            ok2, err2 = 0, 0
+            for upd in updates:
+                try:
+                    with pg.cursor() as cur:
+                        cur.execute(update_sql, (upd[col], upd["id"]))
+                    pg.commit()
+                    ok2 += 1
+                except Exception as e:
+                    pg.rollback()
+                    if err2 < 5:
+                        log(f"    Erro 2-pass {upd['id']}: {e}", "WARN")
+                    err2 += 1
         log(f"    OK={ok2}, ERR={err2}")
+
+    # Reabilitar triggers de FK
+    with pg.cursor() as cur:
+        cur.execute("SET session_replication_role = 'origin'")
+    pg.commit()
+    log("FK triggers reabilitados (session_replication_role=origin)")
 
     # ---- Resumo final ----
     log("\n" + "=" * 60)
@@ -704,17 +834,18 @@ def run_etl():
     total_err = sum(s["err"] for s in stats.values())
 
     critical = ["is_usuarios", "is_clientes", "is_produtos", "is_pedidos", "is_pedidos_itens"]
-    log("\nTabelas Críticas:")
+    log("\nTabelas Criticas:")
     for t in critical:
         if t in stats:
             s = stats[t]
-            status = "✓" if s["err"] == 0 else "!"
+            status = "OK" if s["err"] == 0 else "!!"
             log(f"  {status} {t}: {s['ok']} OK, {s['err']} ERR")
 
     log(f"\nTOTAL: {total_ok:,} registros OK, {total_err:,} erros")
 
     cursor.close()
     mysql.close()
+    pg.close()
     log("\nETL COMPLETO!")
 
 
