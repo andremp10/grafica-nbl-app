@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NBL ETL — Crontab de produção
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Instalação:
+#   crontab /opt/nbl_etl/grafica-nbl-app/etl.crontab
+#
+# Pré-requisitos:
+#   - Repositório clonado em $WORK_DIR (ajuste abaixo)
+#   - Python 3.11+ em /usr/bin/python3
+#   - Arquivo .env preenchido com credenciais de produção
+#   - Diretórios logs/ e backups/ criados (o script cria automaticamente)
+#
+# Fuso horário: BRT (Brasília) = UTC-3
+#   02:00 BRT = 05:00 UTC  →  cron: 0 5 * * *
+#
+# ─────────────────────────────────────────────────────────────────────────────
+
+SHELL=/bin/bash
+MAILTO=""
+WORK_DIR=/opt/nbl_etl/grafica-nbl-app
+
+# ── ETL nightly ── 02:00 BRT (05:00 UTC) ─────────────────────────────────────
+# Executa daily_job.py e salva log rotativo por data.
+0 5 * * * cd $WORK_DIR && /usr/bin/python3 scripts/daily_job.py >> logs/cron_$(date +\%Y\%m\%d).log 2>&1
+
+# ── Webhook server (opcional) — inicializa no boot ───────────────────────────
+# Descomente para subir o servidor de webhook automaticamente após reinicialização.
+# O token WEBHOOK_TOKEN deve estar definido no arquivo .env.
+# @reboot cd $WORK_DIR && /usr/bin/python3 scripts/webhook.py >> logs/webhook.log 2>&1 &
+
+# ── Limpeza de logs antigos — todos os domingos às 03:00 BRT (06:00 UTC) ─────
+0 6 * * 0 find $WORK_DIR/logs -name "*.log" -mtime +30 -delete

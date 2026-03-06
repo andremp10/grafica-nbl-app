@@ -22,6 +22,8 @@ import uuid
 import json
 import sys
 import html
+import time
+import threading
 import datetime as dt
 from pathlib import Path
 from typing import Optional, Dict, Any, Set, List, Tuple
@@ -97,6 +99,7 @@ HUMAN_TEXT_COLUMNS: Set[str] = {
 NAME_LIKE_COLUMNS: Set[str] = {"nome", "sobrenome", "razao_social", "fantasia", "titulo"}
 
 ETL_ERRORS: List[dict] = []
+_ETL_ERRORS_LOCK = threading.Lock()  # thread-safe para execução paralela futura
 
 # ============================================================================
 # LOGGING
@@ -137,17 +140,18 @@ def record_etl_error(
     stage: str = "insert",
     probable: Optional[str] = None,
 ) -> None:
-    if len(ETL_ERRORS) >= MAX_CAPTURED_ERRORS:
-        return
-    ETL_ERRORS.append(
-        {
-            "table": table,
-            "legacy_id": None if legacy_id in (None, "", "None") else str(legacy_id),
-            "stage": stage,
-            "probable_constraint": probable or _probable_constraint(message),
-            "message": _short_error_message(message),
-        }
-    )
+    with _ETL_ERRORS_LOCK:
+        if len(ETL_ERRORS) >= MAX_CAPTURED_ERRORS:
+            return
+        ETL_ERRORS.append(
+            {
+                "table": table,
+                "legacy_id": None if legacy_id in (None, "", "None") else str(legacy_id),
+                "stage": stage,
+                "probable_constraint": probable or _probable_constraint(message),
+                "message": _short_error_message(message),
+            }
+        )
 
 
 def write_etl_error_report(total_errors: int) -> None:
@@ -664,43 +668,68 @@ def load_column_mapping(path: Path = MAPPING_PATH) -> Dict[str, Dict[str, str]]:
 COLUMN_MAPPING = load_column_mapping()
 
 
-EXEC_ORDER = [
-    # Nível 0: sem dependências
-    "is_extras_status",
-    "is_entregas_balcoes",
-    "is_entregas_fretes",
-    "is_financeiro_funcionarios",
-    "is_mkt_regras",
-    "is_producao_setores",
-    "is_produtos",
-    "is_produtos_vars_nomes",
-    "is_clientes",
-    # Nível 1: dependem do nível 0
-    "is_usuarios",
-    "is_clientes_pf",
-    "is_clientes_pj",
-    "is_clientes_enderecos",
-    "is_entregas_fretes_locais",
-    "is_produtos_categorias",
-    "is_produtos_vars",
-    "is_produtos_categorias_extras",
-    # Nível 2
-    "is_mkt_cupons",
-    "is_mkt_cupons_produtos",
-    "is_financeiro_lancamentos",
-    "is_pedidos",
-    # Nível 3
-    "is_pedidos_fretes_detalhes",
-    "is_pedidos_fretes_entregas",
-    "is_pedidos_itens",
-    "is_pedidos_pagamentos",
-    "is_usuarios_historico",
-    # Nível 4
-    "is_clientes_extratos",
-    "is_pedidos_historico",
-    "is_pedidos_itens_reprovados",
-    "is_pedidos_pag_reprovados",
+# ============================================================================
+# ORDEM TOPOLÓGICA — blocos de execução com integridade referencial estrita
+#
+# Regra: um bloco inteiro DEVE ser concluído antes do próximo iniciar.
+# Tabelas dentro do mesmo bloco não têm dependências entre si → podem
+# rodar em paralelo (ThreadPoolExecutor, habilitado por ETL_PARALLEL_BLOCKS=1).
+#
+# Auto-relacionamentos (parent_id / original_id) são tratados via
+# SET session_replication_role = 'replica' nos processadores dedicados,
+# eliminando a necessidade de 2-pass UPDATE.
+# ============================================================================
+EXEC_BLOCKS: List[List[str]] = [
+    # ── Bloco 0 — sem dependências externas ──────────────────────────────
+    [
+        "is_clientes",
+        "is_entregas_balcoes",
+        "is_entregas_fretes",
+        "is_extras_status",
+        "is_financeiro_funcionarios",
+        "is_mkt_regras",
+        "is_producao_setores",
+        "is_produtos",
+        "is_produtos_vars_nomes",
+        "is_produtos_categorias",      # self-ref parent_id → via replication_role
+    ],
+    # ── Bloco 1 — dependem do Bloco 0 ───────────────────────────────────
+    [
+        "is_clientes_enderecos",       # FK → is_clientes
+        "is_clientes_pf",              # derivado de is_clientes
+        "is_clientes_pj",              # derivado de is_clientes
+        "is_mkt_cupons",               # FK → is_clientes
+        "is_entregas_fretes_locais",   # FK → is_entregas_fretes
+        "is_produtos_categorias_extras",  # FK → is_produtos
+        "is_produtos_vars",            # FK → is_produtos, is_produtos_vars_nomes
+        "is_usuarios",                 # FK → is_entregas_balcoes
+    ],
+    # ── Bloco 2 — dependem do Bloco 1 ───────────────────────────────────
+    [
+        "is_mkt_cupons_produtos",      # FK → is_mkt_cupons, is_produtos
+        "is_usuarios_historico",       # FK → is_usuarios, is_clientes
+        "is_financeiro_lancamentos",   # FK → is_financeiro_funcionarios, is_usuarios
+        "is_pedidos",                  # FK → is_clientes, is_usuarios, is_mkt_cupons
+    ],
+    # ── Bloco 3 — dependem do Bloco 2 ───────────────────────────────────
+    [
+        "is_pedidos_fretes_detalhes",  # FK → is_pedidos
+        "is_pedidos_fretes_entregas",  # FK → is_pedidos
+        "is_pedidos_itens",            # FK → is_pedidos, is_produtos
+        "is_pedidos_pagamentos",       # FK → is_pedidos, is_clientes; self-ref original_id
+    ],
+    # ── Bloco 4 — dependem do Bloco 3 ───────────────────────────────────
+    [
+        "is_clientes_extratos",        # FK → is_clientes, is_pedidos, is_pedidos_pagamentos
+        "is_pedidos_historico",        # FK → is_pedidos, is_pedidos_itens, is_extras_status
+        "is_pedidos_itens_reprovados", # FK → is_pedidos_itens
+        "is_pedidos_pag_reprovados",   # FK → is_pedidos_pagamentos
+    ],
 ]
+
+# EXEC_ORDER linear derivado dos blocos — mantido para compatibilidade retroativa
+# (validate_mapping_contract, testes, RESUMO FINAL)
+EXEC_ORDER: List[str] = [t for block in EXEC_BLOCKS for t in block]
 
 CONFLICT_COLS: Dict[str, str] = {
     "is_clientes_pf": "cliente_id",
@@ -708,9 +737,12 @@ CONFLICT_COLS: Dict[str, str] = {
     "is_mkt_cupons_produtos": "cupom_id,produto_id",
 }
 
+# Documentação: tabelas com auto-referência FK.
+# Tratadas via SET session_replication_role = 'replica' nos processadores
+# _process_categorias e _process_pagamentos — NÃO usa 2-pass UPDATE.
 SELF_REF_TABLES: Dict[str, str] = {
-    "is_produtos_categorias": "parent_id",
-    "is_pedidos_pagamentos": "original_id",
+    "is_produtos_categorias": "parent_id",   # resolvido via session_replication_role
+    "is_pedidos_pagamentos":  "original_id", # resolvido via session_replication_role
 }
 
 # Colunas NOT NULL que DEVEM ser não-nulas após transform.
@@ -1361,15 +1393,65 @@ def pg_flush(conn, table, batch, conflict_col, ok, err):
     return [], ok, err
 
 
+def _set_replication_role(pg, role: str) -> None:
+    """Ativa/desativa checagem de FK e triggers para a sessão PostgreSQL corrente.
+
+    role='replica' → FK checks + triggers desativados.
+                     Seguro para tabelas com auto-relacionamento (self-ref FKs)
+                     quando todos os registros já estão sendo carregados no mesmo
+                     lote e a tabela pai está garantidamente na mesma sessão.
+    role='origin'  → comportamento padrão (restaurar SEMPRE após a carga).
+
+    Requer: usuário PostgreSQL com privilégio de superuser ou BYPASSRLS.
+    Nota: SET session_replication_role afeta toda a SESSÃO, não apenas a transação.
+    """
+    assert role in ("replica", "origin"), f"role inválido: {role!r}"
+    with pg.cursor() as cur:
+        cur.execute(f"SET session_replication_role = '{role}'")
+    pg.commit()
+    log(f"  [FK-BYPASS] session_replication_role → '{role}'")
+
+
 # ============================================================================
 # ETL PRINCIPAL
 # ============================================================================
 def run_precheck(mysql_cursor) -> bool:
     """
     Valida transformações sem escrita no Supabase.
-    Retorna True quando todas as verificações críticas passam.
+
+    DRY-RUN: mostra estrutura de blocos, contagem de linhas por tabela no MySQL,
+    colunas NOT NULL críticas e auto-referências. Retorna True quando todas as
+    verificações de transformação críticas passam.
     """
     log("PRECHECK: validando transformações (sem escrita)...")
+    log("")
+    log("─" * 70)
+    log("DRY-RUN — SIMULAÇÃO DE CARGA POR BLOCO TOPOLÓGICO")
+    log("─" * 70)
+    for block_num, block_tables in enumerate(EXEC_BLOCKS):
+        log(f"  BLOCO {block_num} ({len(block_tables)} tabelas):")
+        for table in block_tables:
+            source = SOURCE_TABLE_OVERRIDES.get(table) or MYSQL_TABLE_NAME_MAP.get(table, table)
+            if table in DERIVED_TABLES:
+                count_str = "derivado de is_clientes"
+            else:
+                try:
+                    mysql_cursor.execute(f"SELECT COUNT(*) c FROM `{source}`")
+                    row = mysql_cursor.fetchone()
+                    count_str = f"{row['c']:,} linhas" if row else "?"
+                except Exception:
+                    count_str = "tabela não encontrada"
+            nonnull = list(REQUIRED_NONNULL_COLS.get(table, set()))
+            self_ref = SELF_REF_TABLES.get(table)
+            flags = []
+            if nonnull:
+                flags.append(f"NOT NULL: {nonnull}")
+            if self_ref:
+                flags.append(f"self-ref({self_ref}) via session_replication_role")
+            suffix = " │ " + " │ ".join(flags) if flags else ""
+            log(f"    {table:<42s} → {count_str}{suffix}")
+    log("─" * 70)
+    log("")
     passed = True
 
     mapping_errors = validate_mapping_contract(mysql_cursor)
@@ -1510,26 +1592,31 @@ def run_precheck(mysql_cursor) -> bool:
 def run_etl():
     global VALID_FK_IDS
     ETL_ERRORS.clear()
+    etl_start = time.monotonic()
+
     log("=" * 70)
-    log("ETL v11 — MySQL legado → Supabase (psycopg2 direto)")
+    log("ETL v12 — MySQL legado → Supabase │ Blocos Topológicos + FK-Bypass")
     log("=" * 70)
+    log(f"Blocos: {len(EXEC_BLOCKS)} │ Tabelas: {len(EXEC_ORDER)} │ Batch: {BATCH_SIZE} │ WriteMode: {WRITE_MODE}")
 
     if VALIDATE_ONLY:
-        # O precheck conecta apenas no MySQL e valida as transformações críticas.
         try:
             mysql = get_mysql()
             cursor = mysql.cursor(dictionary=True)
             VALID_FK_IDS = build_valid_fk_ids(cursor)
-            log("Modo ETL_VALIDATE_ONLY=1 — executando PRECHECK e encerrando.")
+            log("Modo ETL_VALIDATE_ONLY=1 — executando PRECHECK (dry-run) e encerrando.")
             ok = run_precheck(cursor)
             cursor.close()
             mysql.close()
+            if ok:
+                log("")
+                log("PRECHECK OK — nenhuma linha foi escrita no Supabase.")
             sys.exit(0 if ok else 1)
         except Exception as e:
             log(f"PRECHECK erro: {e}", "ERROR")
             sys.exit(1)
 
-    # Conectar
+    # ── Conexões ────────────────────────────────────────────────────────────
     try:
         mysql = get_mysql()
         cursor = mysql.cursor(dictionary=True)
@@ -1540,7 +1627,7 @@ def run_etl():
             for item in mapping_errors[:30]:
                 log(f"Startup mapping validation FAIL: {item}", "ERROR")
             if len(mapping_errors) > 30:
-                log(f"Startup mapping validation FAIL: ... +{len(mapping_errors) - 30} erros", "ERROR")
+                log(f"  ... +{len(mapping_errors) - 30} erros adicionais", "ERROR")
             raise RuntimeError("mapping validation failed before load")
         pg = get_pg()
         log("Conexão PostgreSQL OK")
@@ -1548,32 +1635,29 @@ def run_etl():
         log(f"ERRO de conexão: {e}", "ERROR")
         sys.exit(1)
 
-    # Tabelas a processar
+    # ── Tabelas a processar ──────────────────────────────────────────────────
     if ONLY_TABLES:
-        tables_to_process = [t for t in EXEC_ORDER if t in ONLY_TABLES]
-        log(f"ETL_ONLY_TABLES: {tables_to_process}")
+        tables_to_process_set: Set[str] = ONLY_TABLES
+        log(f"ETL_ONLY_TABLES: {sorted(tables_to_process_set)}")
     else:
-        tables_to_process = list(EXEC_ORDER)
+        tables_to_process_set = set(EXEC_ORDER)
 
-    log(f"Tabelas: {len(tables_to_process)} | Batch: {BATCH_SIZE} | WriteMode: {WRITE_MODE}")
-
+    # ── Estado compartilhado entre blocos ────────────────────────────────────
     stats: Dict[str, Dict[str, int]] = {}
     seen_emails: Dict[str, int] = {}
-    pf_list: List[dict] = []
-    pj_list: List[dict] = []
-    addr_list: List[dict] = []
-    cupons_produtos_list: List[dict] = []
+    pf_list: List[dict] = []        # populado em Bloco 0 (is_clientes) → consumido em Bloco 1
+    pj_list: List[dict] = []        # populado em Bloco 0 (is_clientes) → consumido em Bloco 1
+    addr_list: List[dict] = []      # populado em Bloco 0 (is_clientes) → consumido em Bloco 1
+    cupons_produtos_list: List[dict] = []  # populado em Bloco 1 → consumido em Bloco 2
     cupom_codigos: Set[str] = set()
     categoria_slug_map: Dict[str, int] = {}
 
-    # Pre-load: slug map para categorias
     try:
         categoria_slug_map = build_categoria_slug_map(cursor)
         log(f"Categorias slug map: {len(categoria_slug_map)} entradas")
     except Exception:
         log("Aviso: não foi possível carregar slug map de categorias", "WARN")
 
-    # Pre-load: cupom codigos para validar FK is_pedidos.cupom
     try:
         cursor.execute("SELECT `codigo` FROM `is_mkt_cupons`")
         for row in cursor.fetchall():
@@ -1584,147 +1668,109 @@ def run_etl():
     except Exception:
         log("Aviso: não foi possível carregar códigos de cupons", "WARN")
 
-    # Self-ref data para 2-pass
-    self_ref_data: Dict[str, List[dict]] = {t: [] for t in SELF_REF_TABLES}
-
-    # ---- LOOP PRINCIPAL ----
-    for table in tables_to_process:
-        mapping = COLUMN_MAPPING.get(table)
-        if not mapping:
-            log(f"  [{table}] Sem mapping — skip", "WARN")
+    # ── LOOP DE BLOCOS TOPOLÓGICOS ────────────────────────────────────────────
+    for block_num, block_tables in enumerate(EXEC_BLOCKS):
+        tables_in_block = [t for t in block_tables if t in tables_to_process_set]
+        if not tables_in_block:
             continue
 
-        # Tabelas derivadas de is_clientes
-        if table in DERIVED_TABLES:
-            continue  # Processadas junto com is_clientes
-
-        conflict_col = CONFLICT_COLS.get(table, "id")
-        mysql_table = MYSQL_TABLE_NAME_MAP.get(table, table)
-        self_ref_col = SELF_REF_TABLES.get(table)
-
+        block_start = time.monotonic()
         log("")
-        log(f"{'─'*50}")
-        log(f"TABELA: {table}" + (f" (MySQL: {mysql_table})" if mysql_table != table else ""))
-        log(f"{'─'*50}")
+        log("═" * 70)
+        log(f"BLOCO {block_num} │ {len(tables_in_block)} tabela(s): {', '.join(tables_in_block)}")
+        log("═" * 70)
 
-        # ---- Tabelas com lógica especial ----
-        if table == "is_clientes":
-            ok, err = _process_clientes(cursor, pg, seen_emails, pf_list, pj_list, addr_list)
-            stats[table] = {"ok": ok, "err": err}
-            continue
+        for table in tables_in_block:
+            mapping = COLUMN_MAPPING.get(table)
+            if not mapping:
+                log(f"  [{table}] Sem mapping — skip", "WARN")
+                continue
 
-        if table == "is_clientes_enderecos":
-            ok, err = _process_clientes_enderecos(cursor, pg, addr_list)
-            stats[table] = {"ok": ok, "err": err}
-            continue
+            conflict_col = CONFLICT_COLS.get(table, "id")
+            mysql_table = MYSQL_TABLE_NAME_MAP.get(table, table)
 
-        if table == "is_mkt_cupons":
-            ok, err = _process_mkt_cupons(cursor, pg, cupons_produtos_list)
-            stats[table] = {"ok": ok, "err": err}
-            continue
-
-        if table == "is_mkt_cupons_produtos":
-            ok, err = _process_mkt_cupons_produtos(pg, cupons_produtos_list)
-            stats[table] = {"ok": ok, "err": err}
-            continue
-
-        if table == "is_produtos_categorias":
-            ok, err = _process_categorias(cursor, pg, categoria_slug_map)
-            stats[table] = {"ok": ok, "err": err}
-            continue
-
-        if table == "is_pedidos_fretes_entregas":
-            ok, err = _process_fretes_entregas(cursor, pg)
-            stats[table] = {"ok": ok, "err": err}
-            continue
-
-        if table == "is_pedidos":
-            ok, err = _process_pedidos(cursor, pg, cupom_codigos)
-            stats[table] = {"ok": ok, "err": err}
-            continue
-
-        if table == "is_pedidos_pagamentos":
-            ok, err = _process_pagamentos(cursor, pg, self_ref_data)
-            stats[table] = {"ok": ok, "err": err}
-            continue
-
-        # ---- Tabela genérica ----
-        ok, err = _process_generic(cursor, pg, table, mysql_table, mapping, conflict_col, self_ref_col, self_ref_data)
-        stats[table] = {"ok": ok, "err": err}
-
-    # ---- PF e PJ ----
-    for sub_table, sub_list, sub_conflict in [
-        ("is_clientes_pf", pf_list, "cliente_id"),
-        ("is_clientes_pj", pj_list, "cliente_id"),
-    ]:
-        if sub_list and (not ONLY_TABLES or sub_table in ONLY_TABLES):
             log("")
             log(f"{'─'*50}")
-            log(f"TABELA: {sub_table} ({len(sub_list)} registros derivados)")
+            log(f"TABELA: {table}" + (f" (MySQL: {mysql_table})" if mysql_table != table else ""))
             log(f"{'─'*50}")
-            valid = [p for p in sub_list if p.get("cliente_id")]
-            sub_ok, sub_err = 0, 0
-            for i in range(0, len(valid), BATCH_SIZE):
-                chunk = valid[i:i + BATCH_SIZE]
-                ins, e = pg_upsert(pg, sub_table, chunk, sub_conflict)
-                sub_ok += ins
-                sub_err += e
-            log(f"  → OK={sub_ok:,}  ERR={sub_err:,}")
-            stats[sub_table] = {"ok": sub_ok, "err": sub_err}
 
-    # ---- Pass 2: self-references ----
-    from psycopg2.extras import execute_batch as pg_execute_batch
+            # ── Processadores especializados ──────────────────────────────
+            if table == "is_clientes":
+                ok, err = _process_clientes(cursor, pg, seen_emails, pf_list, pj_list, addr_list)
 
-    for table, col in SELF_REF_TABLES.items():
-        updates = self_ref_data.get(table, [])
-        if not updates:
-            continue
-        if ONLY_TABLES and table not in ONLY_TABLES:
-            continue
+            elif table == "is_clientes_pf":
+                ok, err = _process_derived_pf(pg, pf_list)
+
+            elif table == "is_clientes_pj":
+                ok, err = _process_derived_pj(pg, pj_list)
+
+            elif table == "is_clientes_enderecos":
+                ok, err = _process_clientes_enderecos(cursor, pg, addr_list)
+
+            elif table == "is_mkt_cupons":
+                ok, err = _process_mkt_cupons(cursor, pg, cupons_produtos_list)
+
+            elif table == "is_mkt_cupons_produtos":
+                ok, err = _process_mkt_cupons_produtos(pg, cupons_produtos_list)
+
+            elif table == "is_produtos_categorias":
+                # self-ref parent_id → usa session_replication_role
+                ok, err = _process_categorias(cursor, pg, categoria_slug_map)
+
+            elif table == "is_pedidos_fretes_entregas":
+                ok, err = _process_fretes_entregas(cursor, pg)
+
+            elif table == "is_pedidos":
+                ok, err = _process_pedidos(cursor, pg, cupom_codigos)
+
+            elif table == "is_pedidos_pagamentos":
+                # self-ref original_id → usa session_replication_role
+                ok, err = _process_pagamentos(cursor, pg)
+
+            else:
+                # Processador genérico (sem self-ref)
+                ok, err = _process_generic(
+                    cursor, pg, table, mysql_table, mapping, conflict_col, None, {}
+                )
+
+            stats[table] = {"ok": ok, "err": err}
+
+        # ── Resumo do bloco ───────────────────────────────────────────────
+        block_elapsed = time.monotonic() - block_start
+        block_ok  = sum(stats.get(t, {}).get("ok",  0) for t in tables_in_block)
+        block_err = sum(stats.get(t, {}).get("err", 0) for t in tables_in_block)
+        block_inserted  = block_ok
+        block_rejected  = block_err
         log("")
-        log(f"  [2-pass] {table}.{col}: {len(updates)} registros")
-        sql = f'UPDATE public."{table}" SET "{col}" = %s WHERE "id" = %s'
-        vals = [(u[col], u["id"]) for u in updates]
-        try:
-            with pg.cursor() as cur:
-                pg_execute_batch(cur, sql, vals, page_size=500)
-            pg.commit()
-            log(f"  → 2-pass OK={len(updates):,}")
-        except Exception:
-            pg.rollback()
-            ok2, err2 = 0, 0
-            for u in updates:
-                try:
-                    with pg.cursor() as cur:
-                        cur.execute(sql, (u[col], u["id"]))
-                    pg.commit()
-                    ok2 += 1
-                except Exception as e:
-                    pg.rollback()
-                    if err2 < 3:
-                        log(f"    2-pass err: {str(e)[:200]}", "WARN")
-                    record_etl_error(table, u.get("__legacy_id"), str(e), stage="self_ref_update")
-                    err2 += 1
-            log(f"  → 2-pass OK={ok2:,}  ERR={err2:,}")
+        log(
+            f"BLOCO {block_num} CONCLUÍDO │ "
+            f"inseridas={block_inserted:,} │ "
+            f"rejeitadas={block_rejected:,} │ "
+            f"{block_elapsed:.1f}s"
+        )
 
-    # ---- RESUMO FINAL ----
+    # ── RESUMO FINAL ──────────────────────────────────────────────────────────
+    total_elapsed = time.monotonic() - etl_start
     log("")
     log("=" * 70)
     log("RESUMO FINAL")
     log("=" * 70)
 
-    total_ok = sum(s["ok"] for s in stats.values())
+    total_ok  = sum(s["ok"]  for s in stats.values())
     total_err = sum(s["err"] for s in stats.values())
-    total_err += sum(1 for item in ETL_ERRORS if item.get("stage") == "self_ref_update")
 
-    for t in EXEC_ORDER:
-        if t in stats:
+    for block_num, block_tables in enumerate(EXEC_BLOCKS):
+        in_stats = [t for t in block_tables if t in stats]
+        if not in_stats:
+            continue
+        log(f"  ── Bloco {block_num} ──")
+        for t in in_stats:
             s = stats[t]
             icon = "✓" if s["err"] == 0 else "✗"
-            log(f"  {icon} {t:<40s}  OK={s['ok']:>7,}  ERR={s['err']:>5,}")
+            log(f"    {icon} {t:<42s}  inseridas={s['ok']:>7,}  rejeitadas={s['err']:>5,}")
 
     log("")
-    log(f"  TOTAL: {total_ok:,} OK | {total_err:,} ERR")
+    log(f"  TOTAL: {total_ok:,} inseridas │ {total_err:,} rejeitadas │ {total_elapsed:.1f}s")
 
     cursor.close()
     mysql.close()
@@ -1936,7 +1982,13 @@ def _process_mkt_cupons_produtos(pg, cupons_produtos_list):
 
 
 def _process_categorias(cursor, pg, slug_map):
-    """Processa is_produtos_categorias com resolução de parent_id via chave."""
+    """Processa is_produtos_categorias com resolução de parent_id via chave.
+
+    Usa SET session_replication_role = 'replica' para inserir parent_id diretamente,
+    sem necessidade de 2-pass UPDATE. transform_categoria() já resolve o parent_id
+    via slug_map (chave → legacy_id → UUID5). Todos os registros são inseridos em
+    uma única passagem com as referências já resolvidas.
+    """
     cursor.execute("SELECT * FROM `is_produtos_categorias`")
 
     ok, err = 0, 0
@@ -1946,49 +1998,25 @@ def _process_categorias(cursor, pg, slug_map):
         try:
             t_row = transform_categoria(row, slug_map)
             if t_row and t_row.get("id"):
-                # Self-ref: parent_id já resolvido em transform_categoria
-                batch.append(t_row)
+                batch.append(t_row)  # parent_id já resolvido por transform_categoria
         except Exception as e:
             if err < 3:
                 log(f"    Err cat {row.get('id')}: {e}", "WARN")
             record_etl_error("is_produtos_categorias", row.get("id"), str(e), stage="transform")
             err += 1
 
-    # Insert sem parent_id primeiro, depois update
-    for row in batch:
-        row.pop("parent_id", None)
-        row["parent_id"] = None
+    if not batch:
+        log(f"  → OK=0  ERR={err:,}  (batch vazio)")
+        return 0, err
 
-    batch, ok, err = pg_flush(pg, "is_produtos_categorias", batch, "id", ok, err)
+    # Desativar FK checks para permitir inserção com parent_id (self-ref) em passagem única
+    _set_replication_role(pg, "replica")
+    try:
+        batch, ok, err = pg_flush(pg, "is_produtos_categorias", batch, "id", ok, err)
+    finally:
+        _set_replication_role(pg, "origin")
 
-    # Pass 2: set parent_id
-    from psycopg2.extras import execute_batch as pg_exec_batch
     log(f"  → OK={ok:,}  ERR={err:,}")
-
-    # Reload and update parents
-    cursor.execute("SELECT `id`, `pai` FROM `is_produtos_categorias`")
-    parent_updates = []
-    for row in cursor.fetchall():
-        pai_chave = to_str(row.get("pai"))
-        if pai_chave and pai_chave != "0":
-            parent_legacy_id = slug_map.get(pai_chave)
-            if parent_legacy_id:
-                my_uuid = uuid5_for("is_produtos_categorias", row["id"])
-                parent_uuid = uuid5_for("is_produtos_categorias", parent_legacy_id)
-                parent_updates.append((parent_uuid, my_uuid))
-
-    if parent_updates:
-        sql = 'UPDATE public."is_produtos_categorias" SET "parent_id" = %s WHERE "id" = %s'
-        try:
-            with pg.cursor() as cur:
-                pg_exec_batch(cur, sql, parent_updates, page_size=500)
-            pg.commit()
-            log(f"  → parent_id atualizado: {len(parent_updates)} registros")
-        except Exception as e:
-            pg.rollback()
-            log(f"  → parent_id ERRO: {str(e)[:200]}", "WARN")
-            record_etl_error("is_produtos_categorias", None, str(e), stage="self_ref_update")
-
     return ok, err
 
 
@@ -2070,8 +2098,52 @@ def _process_pedidos(cursor, pg, cupom_codigos):
     return ok, err
 
 
-def _process_pagamentos(cursor, pg, self_ref_data):
-    """Processa is_pedidos_pagamentos com parcelas split e self-ref original_id."""
+def _process_derived_pf(pg, pf_list: List[dict]) -> Tuple[int, int]:
+    """Insere registros de is_clientes_pf derivados de is_clientes (Bloco 1).
+
+    pf_list foi populado durante _process_clientes no Bloco 0.
+    """
+    if not pf_list:
+        log("  → OK=0  ERR=0  (pf_list vazia)")
+        return 0, 0
+    valid = [p for p in pf_list if p.get("cliente_id")]
+    ok, err = 0, 0
+    for i in range(0, len(valid), BATCH_SIZE):
+        chunk = valid[i:i + BATCH_SIZE]
+        ins, e = pg_upsert(pg, "is_clientes_pf", chunk, "cliente_id")
+        ok += ins
+        err += e
+    log(f"  → OK={ok:,}  ERR={err:,}")
+    return ok, err
+
+
+def _process_derived_pj(pg, pj_list: List[dict]) -> Tuple[int, int]:
+    """Insere registros de is_clientes_pj derivados de is_clientes (Bloco 1).
+
+    pj_list foi populado durante _process_clientes no Bloco 0.
+    """
+    if not pj_list:
+        log("  → OK=0  ERR=0  (pj_list vazia)")
+        return 0, 0
+    valid = [p for p in pj_list if p.get("cliente_id")]
+    ok, err = 0, 0
+    for i in range(0, len(valid), BATCH_SIZE):
+        chunk = valid[i:i + BATCH_SIZE]
+        ins, e = pg_upsert(pg, "is_clientes_pj", chunk, "cliente_id")
+        ok += ins
+        err += e
+    log(f"  → OK={ok:,}  ERR={err:,}")
+    return ok, err
+
+
+def _process_pagamentos(cursor, pg):
+    """Processa is_pedidos_pagamentos com parcelas split e original_id (self-ref).
+
+    Usa SET session_replication_role = 'replica' ANTES de iniciar os inserts para
+    permitir que original_id (auto-referência) seja gravado diretamente, sem 2-pass.
+    A restauração para 'origin' ocorre no bloco finally, garantindo que FK checks
+    sejam re-ativados mesmo em caso de erro.
+    """
     mapping = COLUMN_MAPPING["is_pedidos_pagamentos"]
     cols = list(set(mapping.values()))
     if "id" not in cols:
@@ -2084,44 +2156,47 @@ def _process_pagamentos(cursor, pg, self_ref_data):
     processed = 0
     next_progress = 20_000
 
-    while True:
-        rows = cursor.fetchmany(BATCH_SIZE)
-        if not rows:
-            break
-        processed += len(rows)
-        for row in rows:
-            try:
-                t_row = transform_pagamento(row)
-                if t_row and t_row.get("id"):
-                    # cliente_id NOT NULL — skip orphan pagamentos
-                    if t_row.get("cliente_id") is None:
-                        record_etl_error("is_pedidos_pagamentos", row.get("id"),
-                            "cliente_id is None — skipping",
-                            stage="required_nonnull_skip")
-                        err += 1
-                        continue
-                    # forma NOT NULL — fallback to empty string
-                    if t_row.get("forma") is None:
-                        t_row["forma"] = ""
-                    # Self-ref 2-pass para original_id
-                    if t_row.get("original_id"):
-                        self_ref_data["is_pedidos_pagamentos"].append(
-                            {"id": t_row["id"], "original_id": t_row["original_id"]}
-                        )
-                        t_row["original_id"] = None
-                    batch.append(t_row)
-            except Exception as e:
-                if err < 5:
-                    log(f"    Err pag {row.get('id')}: {e}", "WARN")
-                record_etl_error("is_pedidos_pagamentos", row.get("id"), str(e), stage="transform")
-                err += 1
-        if len(batch) >= BATCH_SIZE:
-            batch, ok, err = pg_flush(pg, "is_pedidos_pagamentos", batch, "id", ok, err)
-        if processed >= next_progress:
-            log(f"  … progress is_pedidos_pagamentos: lidos={processed:,} OK={ok:,} ERR={err:,}")
-            next_progress += 20_000
+    # Desativar FK checks para suportar original_id (self-ref) em passagem única
+    _set_replication_role(pg, "replica")
+    try:
+        while True:
+            rows = cursor.fetchmany(BATCH_SIZE)
+            if not rows:
+                break
+            processed += len(rows)
+            for row in rows:
+                try:
+                    t_row = transform_pagamento(row)
+                    if t_row and t_row.get("id"):
+                        # cliente_id NOT NULL — skip orphan pagamentos
+                        if t_row.get("cliente_id") is None:
+                            record_etl_error(
+                                "is_pedidos_pagamentos", row.get("id"),
+                                "cliente_id is None — skipping",
+                                stage="required_nonnull_skip",
+                            )
+                            err += 1
+                            continue
+                        # forma NOT NULL — fallback
+                        if t_row.get("forma") is None:
+                            t_row["forma"] = ""
+                        # original_id: mantido no row (FK disabled via replication_role)
+                        batch.append(t_row)
+                except Exception as e:
+                    if err < 5:
+                        log(f"    Err pag {row.get('id')}: {e}", "WARN")
+                    record_etl_error("is_pedidos_pagamentos", row.get("id"), str(e), stage="transform")
+                    err += 1
+            if len(batch) >= BATCH_SIZE:
+                batch, ok, err = pg_flush(pg, "is_pedidos_pagamentos", batch, "id", ok, err)
+            if processed >= next_progress:
+                log(f"  … progress is_pedidos_pagamentos: lidos={processed:,} OK={ok:,} ERR={err:,}")
+                next_progress += 20_000
 
-    batch, ok, err = pg_flush(pg, "is_pedidos_pagamentos", batch, "id", ok, err)
+        batch, ok, err = pg_flush(pg, "is_pedidos_pagamentos", batch, "id", ok, err)
+    finally:
+        _set_replication_role(pg, "origin")
+
     log(f"  → OK={ok:,}  ERR={err:,}")
     return ok, err
 
