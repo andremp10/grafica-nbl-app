@@ -13,7 +13,7 @@ jobs:
   etl:
     name: ETL Nightly (schedule)
     runs-on: ubuntu-latest
-    timeout-minutes: 720
+    timeout-minutes: 43200  # 30 dias — máximo; GitHub aplica seu próprio limite de plataforma
     env:
       BACKUP_PROTOCOL: ${{ secrets.BACKUP_PROTOCOL }}
       BACKUP_REMOTE_DIR: '/var/lib/vz/dump'
