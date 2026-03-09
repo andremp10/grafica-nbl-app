@@ -390,6 +390,7 @@ MONEY_COLS = {
     "total", "acrescimo", "desconto", "desconto_uso", "sinal",
     "frete_valor", "taxa", "custo", "salario", "vale",
     "valor_arte", "min_compra",
+    "arte_valor",  # is_pedidos_itens.arte_valor NOT NULL DEFAULT 0
 }
 
 # Colunas INT genéricas
@@ -407,7 +408,7 @@ INT_COLS = {
 # Overrides por tabela (quando o tipo global está errado para uma tabela específica)
 TABLE_TYPE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "is_extras_status":            {"visivel": "int", "id": "int_pk"},
-    "is_mkt_cupons":               {"tipo": "cupom_tipo", "valor": "decimal"},
+    "is_mkt_cupons":               {"tipo": "cupom_tipo", "valor": "money"},  # valor NOT NULL CHECK >= 0
     "is_producao_setores":         {"status": "str"},
     "is_pedidos_itens":            {"status": "str", "visto": "int"},
     "is_pedidos_pagamentos":       {"visto": "bool"},
@@ -761,15 +762,44 @@ REQUIRED_NONNULL_COLS: Dict[str, Set[str]] = {
     "is_pedidos_pag_reprovados":    {"motivo"},
 }
 
-# Fallbacks para colunas NOT NULL (sem DEFAULT no schema) que podem vir nulas do MySQL.
-# Aplicados APÓS transform_row, ANTES do insert.
+# Fallbacks para colunas NOT NULL (com DEFAULT no schema Supabase) que podem vir nulas
+# do MySQL. Aplicados APÓS transform_row e ANTES do insert para evitar violações NOT NULL.
+# Regra: usar o DEFAULT do schema Supabase como fallback, nunca inventar valores.
 NONNULL_FALLBACKS: Dict[str, Dict[str, Any]] = {
     # senha_log NOT NULL, acesso NOT NULL
     "is_usuarios":              {"senha_log": "", "acesso": 0},
+    # saldo NOT NULL DEFAULT 0
+    "is_clientes":              {"saldo": 0.0},
     # status NOT NULL (override int, pode ser nulo no legado)
     "is_financeiro_lancamentos": {"status": 0},
     # saldo_antes/saldo_depois/valor NOT NULL
     "is_clientes_extratos":     {"saldo_antes": 0.0, "saldo_depois": 0.0, "valor": 0.0},
+    # status NOT NULL DEFAULT 1
+    "is_produtos_categorias":   {"status": 1},
+    # visivel NOT NULL DEFAULT true; arte/arquivado/estoque_controlar NOT NULL DEFAULT false;
+    # vendidos/estoque_qtde NOT NULL DEFAULT 0
+    "is_produtos": {
+        "visivel": True,
+        "arte": False,
+        "arquivado": False,
+        "vendidos": 0,
+        "estoque_controlar": False,
+        "estoque_qtde": 0,
+    },
+    # uso NOT NULL DEFAULT 0; pedido_min NOT NULL DEFAULT 0;
+    # primeira_compra NOT NULL DEFAULT false; arquivado NOT NULL DEFAULT false
+    "is_mkt_cupons": {
+        "uso": 0,
+        "pedido_min": 0.0,
+        "primeira_compra": False,
+        "arquivado": False,
+    },
+    # devolucao_completa NOT NULL DEFAULT false
+    "is_pedidos":               {"devolucao_completa": False},
+    # pago NOT NULL DEFAULT false; arquivado NOT NULL DEFAULT false
+    "is_pedidos_itens":         {"pago": False, "arquivado": False},
+    # visto NOT NULL DEFAULT false; oculto NOT NULL DEFAULT false
+    "is_pedidos_pagamentos":    {"visto": False, "oculto": False},
 }
 
 # IDs válidos de is_extras_status (1-35 apenas; 0, 9999, 41, 46 são valores legados inválidos)
@@ -971,10 +1001,12 @@ def transform_column(
         if ov == "ts":
             return to_ts(val)
         if ov == "finance_tipo":
+            # MySQL: 1=receita→Supabase 1, 0=despesa→Supabase 2.
+            # Supabase CHECK: tipo = ANY (ARRAY[1, 2]).
             normalized = to_int(val)
             if normalized == 1:
                 return 1
-            if normalized == 0:
+            if normalized in (0, 2):  # 0=despesa legado→2; 2 já é válido
                 return 2
             raise ValueError(f"is_financeiro_lancamentos.tipo inválido no legado: {val!r}")
         if ov == "cupom_tipo":
@@ -2033,16 +2065,31 @@ def _process_categorias(cursor, pg, slug_map):
     sem necessidade de 2-pass UPDATE. transform_categoria() já resolve o parent_id
     via slug_map (chave → legacy_id → UUID5). Todos os registros são inseridos em
     uma única passagem com as referências já resolvidas.
+
+    Deduplica slugs: is_produtos_categorias.slug tem constraint UNIQUE; MySQL pode
+    ter slugs duplicados. O segundo registro com slug igual tem o slug zerado (NULL)
+    para evitar violação da constraint e o consequente batch retry cascade.
     """
     cursor.execute("SELECT * FROM `is_produtos_categorias`")
 
     ok, err = 0, 0
     batch: List[dict] = []
+    seen_slugs: Set[str] = set()
 
     for row in cursor.fetchall():
         try:
             t_row = transform_categoria(row, slug_map)
             if t_row and t_row.get("id"):
+                # Deduplicar slug — UNIQUE constraint
+                slug = t_row.get("slug")
+                if slug:
+                    if slug in seen_slugs:
+                        t_row["slug"] = None  # null out duplicate slug
+                    else:
+                        seen_slugs.add(slug)
+                # status NOT NULL DEFAULT 1
+                if t_row.get("status") is None:
+                    t_row["status"] = 1
                 batch.append(t_row)  # parent_id já resolvido por transform_categoria
         except Exception as e:
             if err < 3:
