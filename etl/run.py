@@ -772,16 +772,48 @@ NONNULL_FALLBACKS: Dict[str, Dict[str, Any]] = {
     "is_clientes_extratos":     {"saldo_antes": 0.0, "saldo_depois": 0.0, "valor": 0.0},
 }
 
+# IDs válidos de is_extras_status (1-35 apenas; 0, 9999, 41, 46 são valores legados inválidos)
+VALID_EXTRAS_STATUS_IDS: frozenset = frozenset(range(1, 36))
+
+# Ordem de prioridade de contrapartes em is_financeiro_lancamentos.
+# A constraint chk_is_financeiro_lancamentos_one_counterparty exige exatamente 1 não-nula.
+_COUNTERPARTY_COLS = [
+    "funcionario_id", "vendedor_id", "categoria_id",
+    "carteira_id", "fornecedor_id", "pdv_id", "caixa_id", "centro_custo_id",
+]
+
+
+def _mutate_pedidos_historico(row: dict) -> dict:
+    """Coerce status_id inválido (fora de 1-35) para None antes do insert."""
+    sid = row.get("status_id")
+    if sid is not None and sid not in VALID_EXTRAS_STATUS_IDS:
+        row["status_id"] = None
+    return row
+
+
+def _mutate_financeiro_lancamentos(row: dict) -> dict:
+    """Garante exatamente 1 contraparte não-nula por row (requerido pela constraint)."""
+    nonnull = [c for c in _COUNTERPARTY_COLS if row.get(c) is not None]
+    if len(nonnull) > 1:
+        # Mantém apenas a de maior prioridade; zera as demais
+        for c in nonnull[1:]:
+            row[c] = None
+    return row
+
+
+# Mutadores pós-transform: corrigem valores antes do validator e do insert.
+POST_TRANSFORM_MUTATORS: Dict[str, Callable[[dict], dict]] = {
+    "is_pedidos_historico":       _mutate_pedidos_historico,
+    "is_financeiro_lancamentos":  _mutate_financeiro_lancamentos,
+}
+
 # Validadores pós-transform: filtram rows que violam constraints do Supabase
 # antes do insert (evita FK/CHECK violations → batch retry cascade).
 POST_TRANSFORM_VALIDATORS: Dict[str, Callable[[dict], bool]] = {
-    # is_financeiro_lancamentos exige ao menos uma contraparte não-nula.
-    # Rows com todas contrapartes NULL violam chk_is_financeiro_lancamentos_one_counterparty.
+    # Após o mutador garantir ≤1 contraparte, rejeita rows com TODAS contrapartes NULL.
+    # (chk_is_financeiro_lancamentos_one_counterparty exige exatamente 1 não-nula)
     "is_financeiro_lancamentos": lambda row: any(
-        row.get(c) is not None for c in [
-            "funcionario_id", "vendedor_id", "categoria_id",
-            "carteira_id", "fornecedor_id", "pdv_id", "caixa_id", "centro_custo_id",
-        ]
+        row.get(c) is not None for c in _COUNTERPARTY_COLS
     ),
 }
 
@@ -2257,6 +2289,10 @@ def _process_generic(cursor, pg, table, mysql_table, mapping, conflict_col, self
                     for col, default in fallbacks.items():
                         if t_row.get(col) is None:
                             t_row[col] = default
+                    # Mutate rows to coerce invalid FK/CHECK values before insert
+                    _mutator = POST_TRANSFORM_MUTATORS.get(table)
+                    if _mutator:
+                        t_row = _mutator(t_row)
                     # Pre-filter rows that would violate Supabase CHECK constraints
                     _validator = POST_TRANSFORM_VALIDATORS.get(table)
                     if _validator and not _validator(t_row):
