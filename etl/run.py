@@ -26,7 +26,7 @@ import time
 import threading
 import datetime as dt
 from pathlib import Path
-from typing import Optional, Dict, Any, Set, List, Tuple
+from typing import Optional, Dict, Any, Set, List, Tuple, Callable
 
 from dotenv import load_dotenv
 
@@ -416,7 +416,7 @@ TABLE_TYPE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "is_entregas_fretes":          {"prazo": "int", "tipo": "int"},
     "is_entregas_balcoes":         {"prazo": "str"},
     "is_pedidos":                  {"frete_tipo": "str", "origem": "int"},
-    "is_pedidos_historico":        {"status_id": "int"},
+    "is_pedidos_historico":        {},  # status_id: FK_MAP "_int" trata 0→None corretamente
     "is_clientes":                 {"status": "int", "retirada": "int", "revendedor": "int", "pdv": "int"},
     "is_usuarios":                 {"status": "int", "acesso": "int"},
     "is_mkt_regras":               {"tipo": "int"},
@@ -770,6 +770,19 @@ NONNULL_FALLBACKS: Dict[str, Dict[str, Any]] = {
     "is_financeiro_lancamentos": {"status": 0},
     # saldo_antes/saldo_depois/valor NOT NULL
     "is_clientes_extratos":     {"saldo_antes": 0.0, "saldo_depois": 0.0, "valor": 0.0},
+}
+
+# Validadores pós-transform: filtram rows que violam constraints do Supabase
+# antes do insert (evita FK/CHECK violations → batch retry cascade).
+POST_TRANSFORM_VALIDATORS: Dict[str, Callable[[dict], bool]] = {
+    # is_financeiro_lancamentos exige ao menos uma contraparte não-nula.
+    # Rows com todas contrapartes NULL violam chk_is_financeiro_lancamentos_one_counterparty.
+    "is_financeiro_lancamentos": lambda row: any(
+        row.get(c) is not None for c in [
+            "funcionario_id", "vendedor_id", "categoria_id",
+            "carteira_id", "fornecedor_id", "pdv_id", "caixa_id", "centro_custo_id",
+        ]
+    ),
 }
 
 
@@ -1151,8 +1164,8 @@ def transform_pedidos_fretes_entregas(row: dict) -> Optional[dict]:
         return None
     new_id = uuid5_for("is_pedidos_fretes_entregas", legacy_id)
     pedido_id = uuid5_for("is_pedidos", row.get("pedido"))
-    if not pedido_id:
-        return None
+    if not pedido_id or not _legacy_fk_exists("is_pedidos", row.get("pedido")):
+        return None  # pedido órfão — skip silencioso
 
     tipo = to_str(row.get("tipo"))
     detalhes_raw = to_str(row.get("detalhes"))
@@ -2244,6 +2257,14 @@ def _process_generic(cursor, pg, table, mysql_table, mapping, conflict_col, self
                     for col, default in fallbacks.items():
                         if t_row.get(col) is None:
                             t_row[col] = default
+                    # Pre-filter rows that would violate Supabase CHECK constraints
+                    _validator = POST_TRANSFORM_VALIDATORS.get(table)
+                    if _validator and not _validator(t_row):
+                        record_etl_error(table, row.get("id"),
+                            "violação de constraint (pre-filter)",
+                            stage="pre-filter")
+                        skipped += 1
+                        continue
                     if self_ref_col and t_row.get(self_ref_col):
                         self_ref_data[table].append(
                             {"id": t_row["id"], self_ref_col: t_row[self_ref_col]}
