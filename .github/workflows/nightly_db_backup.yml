@@ -25,11 +25,8 @@ jobs:
       - name: Create backup directory
         run: mkdir -p "${BACKUP_DIR}"
 
-      - name: Install PostgreSQL client
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client-17
-          pg_dump --version
+      - name: Prepare PostgreSQL 17 client
+        run: docker run --rm postgres:17 pg_dump --version
 
       - name: Dump Supabase
         env:
@@ -41,18 +38,24 @@ jobs:
           toc_path="${dump_path}.toc"
           sha_path="${dump_path}.sha256"
           manifest_path="${BACKUP_DIR}/manifest_${stamp}.json"
+          dump_name="$(basename "${dump_path}")"
+          toc_name="$(basename "${toc_path}")"
 
-          pg_dump \
-            --format=custom \
-            --compress=9 \
-            --no-owner \
-            --no-privileges \
-            --file "${dump_path}" \
-            "${SUPABASE_DB_URL}"
+          docker run --rm \
+            -e SUPABASE_DB_URL="${SUPABASE_DB_URL}" \
+            -v "${PWD}/${BACKUP_DIR}:/backups" \
+            postgres:17 \
+            bash -lc "
+              pg_dump --format=custom \
+                --compress=9 \
+                --no-owner \
+                --no-privileges \
+                --file \"/backups/${dump_name}\" \
+                \"\$SUPABASE_DB_URL\"
+              pg_restore -l \"/backups/${dump_name}\" > \"/backups/${toc_name}\"
+            "
 
           test -s "${dump_path}"
-
-          pg_restore -l "${dump_path}" > "${toc_path}"
           sha256sum "${dump_path}" | tee "${sha_path}"
 
           DUMP_PATH="${dump_path}" SHA_PATH="${sha_path}" TOC_PATH="${toc_path}" MANIFEST_PATH="${manifest_path}" python - <<'PY'
