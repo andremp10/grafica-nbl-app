@@ -812,6 +812,26 @@ _FINANCE_RELATION_COLS = [
     "carteira_id", "fornecedor_id", "pdv_id", "caixa_id", "centro_custo_id",
 ]
 
+# Produção impõe chk_is_financeiro_lancamentos_one_counterparty, mas o conjunto
+# exato de colunas coberto pela constraint não está versionado no repositório.
+# Para evitar apagar relações em massa, aplicamos reparos progressivos apenas nas
+# rows que o banco realmente rejeita.
+_FINANCE_CONSTRAINT_REPAIR_GROUPS = [
+    ["funcionario_id", "vendedor_id", "fornecedor_id", "pdv_id"],
+    ["funcionario_id", "vendedor_id", "fornecedor_id", "pdv_id", "carteira_id"],
+    ["funcionario_id", "vendedor_id", "fornecedor_id", "pdv_id", "carteira_id", "caixa_id"],
+    [
+        "funcionario_id",
+        "vendedor_id",
+        "fornecedor_id",
+        "pdv_id",
+        "carteira_id",
+        "caixa_id",
+        "centro_custo_id",
+    ],
+    _FINANCE_RELATION_COLS,
+]
+
 
 def _mutate_pedidos_historico(row: dict) -> dict:
     """Coerce status_id inválido (fora de 1-35) para None antes do insert."""
@@ -819,6 +839,32 @@ def _mutate_pedidos_historico(row: dict) -> dict:
     if sid is not None and sid not in VALID_EXTRAS_STATUS_IDS:
         row["status_id"] = None
     return row
+
+
+def _repair_finance_constraint_row(row: dict) -> List[dict]:
+    """Gera variantes progressivas para rows rejeitadas pela constraint financeira."""
+    repaired_rows: List[dict] = []
+    seen: set[Tuple[Any, ...]] = set()
+    for group in _FINANCE_CONSTRAINT_REPAIR_GROUPS:
+        nonnull = [col for col in group if row.get(col) is not None]
+        if len(nonnull) <= 1:
+            continue
+        repaired = row.copy()
+        for col in nonnull[1:]:
+            repaired[col] = None
+        signature = tuple(repaired.get(col) for col in _FINANCE_RELATION_COLS)
+        if signature not in seen:
+            repaired_rows.append(repaired)
+            seen.add(signature)
+    return repaired_rows
+
+
+def _repair_row_for_insert(table: str, row: dict, message: str) -> List[dict]:
+    if table != "is_financeiro_lancamentos":
+        return []
+    if "chk_is_financeiro_lancamentos_one_counterparty" not in message:
+        return []
+    return _repair_finance_constraint_row(row)
 
 
 # Mutadores pós-transform: corrigem valores antes do validator e do insert.
@@ -1398,8 +1444,7 @@ def pg_upsert(
 
     jsonb_cols = {c for c in columns if c.endswith("_json")}
 
-    values = []
-    for row in batch:
+    def _row_to_values(row: dict) -> Tuple[Any, ...]:
         row_vals = []
         for c in columns:
             v = row[c]
@@ -1412,7 +1457,9 @@ def pg_upsert(
                     row_vals.append(v)
             else:
                 row_vals.append(v)
-        values.append(tuple(row_vals))
+        return tuple(row_vals)
+
+    values = [_row_to_values(row) for row in batch]
 
     def _execute_batch(batch_values: List[Tuple[Any, ...]]) -> None:
         with conn.cursor() as cur:
@@ -1434,6 +1481,19 @@ def pg_upsert(
             if len(rows_and_values) == 1:
                 source_row, _ = rows_and_values[0]
                 legacy_id = source_row.get("__legacy_id")
+                repaired_rows = _repair_row_for_insert(table, source_row, str(split_err))
+                for repaired_row in repaired_rows:
+                    try:
+                        _execute_batch([_row_to_values(repaired_row)])
+                        conn.commit()
+                        log(
+                            f"    Row repaired ({table}): {_probable_constraint(str(split_err)) or 'constraint'}",
+                            "WARN",
+                        )
+                        return 1, 0
+                    except Exception as repair_err:
+                        conn.rollback()
+                        split_err = repair_err
                 msg = str(split_err)[:200]
                 if row_error_logs["count"] < 3 and msg and "Row error:" not in msg:
                     log(f"    Row error: {msg}", "WARN")

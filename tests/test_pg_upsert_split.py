@@ -77,3 +77,40 @@ def test_pg_upsert_success_keeps_single_commit(monkeypatch) -> None:
     assert conn.commit_calls == 1
     assert conn.rollback_calls == 0
     assert len(calls) == 1
+
+
+def test_pg_upsert_repairs_finance_constraint_rows(monkeypatch) -> None:
+    calls: list[list[tuple]] = []
+
+    def fake_execute_values(cur, sql, values, page_size):
+        calls.append(list(values))
+        row = values[0]
+        if len(values) == 1 and row[2] is not None and row[3] is not None:
+            raise RuntimeError(
+                'new row for relation "is_financeiro_lancamentos" '
+                'violates check constraint "chk_is_financeiro_lancamentos_one_counterparty"'
+            )
+
+    monkeypatch.setattr("psycopg2.extras.execute_values", fake_execute_values)
+
+    conn = ConnStub()
+    batch = [
+        {
+            "id": "finance-1",
+            "__legacy_id": "10",
+            "descricao": "SALARIO",
+            "funcionario_id": "func-1",
+            "carteira_id": "wallet-1",
+        }
+    ]
+
+    etl_run.ETL_ERRORS.clear()
+    ok, err = etl_run.pg_upsert(conn, "is_financeiro_lancamentos", batch, "id")
+
+    assert (ok, err) == (1, 0)
+    assert conn.commit_calls == 1
+    assert conn.rollback_calls == 2
+    assert calls[-1][0][2] is not None
+    assert calls[-1][0][3] is None
+    assert len(etl_run.ETL_ERRORS) == 1
+    assert etl_run.ETL_ERRORS[0]["stage"] == "batch_insert"
