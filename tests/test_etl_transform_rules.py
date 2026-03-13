@@ -25,18 +25,8 @@ def test_finance_rows_without_counterparty_are_not_prefiltered() -> None:
     assert "is_financeiro_lancamentos" not in etl_run.POST_TRANSFORM_VALIDATORS
 
 
-def test_finance_mutator_keeps_highest_priority_counterparty_only() -> None:
-    row = {
-        "funcionario_id": "func",
-        "vendedor_id": "vend",
-        "categoria_id": "cat",
-    }
-
-    transformed = etl_run._mutate_financeiro_lancamentos(row.copy())
-
-    assert transformed["funcionario_id"] == "func"
-    assert transformed["vendedor_id"] is None
-    assert transformed["categoria_id"] is None
+def test_finance_relations_are_not_mutated_or_dropped() -> None:
+    assert "is_financeiro_lancamentos" not in etl_run.POST_TRANSFORM_MUTATORS
 
 
 @pytest.mark.parametrize(

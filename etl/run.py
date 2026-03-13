@@ -805,11 +805,9 @@ NONNULL_FALLBACKS: Dict[str, Dict[str, Any]] = {
 # IDs válidos de is_extras_status (1-35 apenas; 0, 9999, 41, 46 são valores legados inválidos)
 VALID_EXTRAS_STATUS_IDS: frozenset = frozenset(range(1, 36))
 
-# Ordem de prioridade de contrapartes em is_financeiro_lancamentos.
-# O schema versionado não exige contraparte obrigatória; portanto rows sem contraparte
-# devem ser carregadas normalmente. Mantemos apenas a normalização defensiva para rows
-# legadas que venham com múltiplas contrapartes preenchidas.
-_COUNTERPARTY_COLS = [
+# Relações opcionais em is_financeiro_lancamentos. O legado pode preencher várias
+# simultaneamente; o schema atual aceita essa combinação e o ETL deve preservá-la.
+_FINANCE_RELATION_COLS = [
     "funcionario_id", "vendedor_id", "categoria_id",
     "carteira_id", "fornecedor_id", "pdv_id", "caixa_id", "centro_custo_id",
 ]
@@ -823,20 +821,9 @@ def _mutate_pedidos_historico(row: dict) -> dict:
     return row
 
 
-def _mutate_financeiro_lancamentos(row: dict) -> dict:
-    """Garante exatamente 1 contraparte não-nula por row (requerido pela constraint)."""
-    nonnull = [c for c in _COUNTERPARTY_COLS if row.get(c) is not None]
-    if len(nonnull) > 1:
-        # Mantém apenas a de maior prioridade; zera as demais
-        for c in nonnull[1:]:
-            row[c] = None
-    return row
-
-
 # Mutadores pós-transform: corrigem valores antes do validator e do insert.
 POST_TRANSFORM_MUTATORS: Dict[str, Callable[[dict], dict]] = {
     "is_pedidos_historico":       _mutate_pedidos_historico,
-    "is_financeiro_lancamentos":  _mutate_financeiro_lancamentos,
 }
 
 # Validadores pós-transform: filtram rows que violam constraints do Supabase
@@ -1634,8 +1621,8 @@ def run_precheck(mysql_cursor) -> bool:
     )
     fin_rows = mysql_cursor.fetchall()
     fin_tipo_invalid = 0
-    fin_without_counterparty = 0
-    fin_with_multiple_counterparties = 0
+    fin_without_relations = 0
+    fin_with_multiple_relations = 0
     for row in fin_rows:
         try:
             mapped_tipo = transform_column(
@@ -1649,19 +1636,19 @@ def run_precheck(mysql_cursor) -> bool:
                 fin_tipo_invalid += 1
             transformed = transform_row(row, "is_financeiro_lancamentos", COLUMN_MAPPING["is_financeiro_lancamentos"])
             if transformed:
-                counterparties = [c for c in _COUNTERPARTY_COLS if transformed.get(c) is not None]
-                if not counterparties:
-                    fin_without_counterparty += 1
-                elif len(counterparties) > 1:
-                    fin_with_multiple_counterparties += 1
+                relations = [c for c in _FINANCE_RELATION_COLS if transformed.get(c) is not None]
+                if not relations:
+                    fin_without_relations += 1
+                elif len(relations) > 1:
+                    fin_with_multiple_relations += 1
         except Exception:
             fin_tipo_invalid += 1
     log(
         "PRECHECK financeiro: "
         f"source={len(fin_rows):,} "
         f"tipo_invalid={fin_tipo_invalid:,} "
-        f"sem_contraparte={fin_without_counterparty:,} "
-        f"multi_contraparte={fin_with_multiple_counterparties:,}"
+        f"sem_relacoes={fin_without_relations:,} "
+        f"multiplas_relacoes={fin_with_multiple_relations:,}"
     )
     if fin_tipo_invalid > 0:
         passed = False
