@@ -21,6 +21,24 @@ def test_finance_tipo_invalid_is_fatal() -> None:
         etl_run.transform_column("tipo", "tipo", 7, "is_financeiro_lancamentos", overrides)
 
 
+def test_finance_rows_without_counterparty_are_not_prefiltered() -> None:
+    assert "is_financeiro_lancamentos" not in etl_run.POST_TRANSFORM_VALIDATORS
+
+
+def test_finance_mutator_keeps_highest_priority_counterparty_only() -> None:
+    row = {
+        "funcionario_id": "func",
+        "vendedor_id": "vend",
+        "categoria_id": "cat",
+    }
+
+    transformed = etl_run._mutate_financeiro_lancamentos(row.copy())
+
+    assert transformed["funcionario_id"] == "func"
+    assert transformed["vendedor_id"] is None
+    assert transformed["categoria_id"] is None
+
+
 @pytest.mark.parametrize(
     ("parcelas_raw", "expected_qtd"),
     [

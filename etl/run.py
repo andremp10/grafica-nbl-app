@@ -806,7 +806,9 @@ NONNULL_FALLBACKS: Dict[str, Dict[str, Any]] = {
 VALID_EXTRAS_STATUS_IDS: frozenset = frozenset(range(1, 36))
 
 # Ordem de prioridade de contrapartes em is_financeiro_lancamentos.
-# A constraint chk_is_financeiro_lancamentos_one_counterparty exige exatamente 1 não-nula.
+# O schema versionado não exige contraparte obrigatória; portanto rows sem contraparte
+# devem ser carregadas normalmente. Mantemos apenas a normalização defensiva para rows
+# legadas que venham com múltiplas contrapartes preenchidas.
 _COUNTERPARTY_COLS = [
     "funcionario_id", "vendedor_id", "categoria_id",
     "carteira_id", "fornecedor_id", "pdv_id", "caixa_id", "centro_custo_id",
@@ -839,13 +841,7 @@ POST_TRANSFORM_MUTATORS: Dict[str, Callable[[dict], dict]] = {
 
 # Validadores pós-transform: filtram rows que violam constraints do Supabase
 # antes do insert (evita FK/CHECK violations → batch retry cascade).
-POST_TRANSFORM_VALIDATORS: Dict[str, Callable[[dict], bool]] = {
-    # Após o mutador garantir ≤1 contraparte, rejeita rows com TODAS contrapartes NULL.
-    # (chk_is_financeiro_lancamentos_one_counterparty exige exatamente 1 não-nula)
-    "is_financeiro_lancamentos": lambda row: any(
-        row.get(c) is not None for c in _COUNTERPARTY_COLS
-    ),
-}
+POST_TRANSFORM_VALIDATORS: Dict[str, Callable[[dict], bool]] = {}
 
 
 # ============================================================================
@@ -1629,9 +1625,17 @@ def run_precheck(mysql_cursor) -> bool:
         passed = False
         log("PRECHECK FAIL: categorias com pai não resolvido por chave", "ERROR")
 
-    mysql_cursor.execute("SELECT `id`,`tipo`,`valor`,`status` FROM `is_financeiro_lancamentos`")
+    mysql_cursor.execute(
+        """
+        SELECT `id`,`tipo`,`valor`,`status`,`categoria`,`carteira`,`fornecedor`,
+               `pdv`,`funcionario`,`vendedor`,`caixa`,`centro_custo`
+        FROM `is_financeiro_lancamentos`
+        """
+    )
     fin_rows = mysql_cursor.fetchall()
     fin_tipo_invalid = 0
+    fin_without_counterparty = 0
+    fin_with_multiple_counterparties = 0
     for row in fin_rows:
         try:
             mapped_tipo = transform_column(
@@ -1643,9 +1647,22 @@ def run_precheck(mysql_cursor) -> bool:
             )
             if mapped_tipo not in (1, 2):
                 fin_tipo_invalid += 1
+            transformed = transform_row(row, "is_financeiro_lancamentos", COLUMN_MAPPING["is_financeiro_lancamentos"])
+            if transformed:
+                counterparties = [c for c in _COUNTERPARTY_COLS if transformed.get(c) is not None]
+                if not counterparties:
+                    fin_without_counterparty += 1
+                elif len(counterparties) > 1:
+                    fin_with_multiple_counterparties += 1
         except Exception:
             fin_tipo_invalid += 1
-    log(f"PRECHECK financeiro: source={len(fin_rows):,} tipo_invalid={fin_tipo_invalid:,}")
+    log(
+        "PRECHECK financeiro: "
+        f"source={len(fin_rows):,} "
+        f"tipo_invalid={fin_tipo_invalid:,} "
+        f"sem_contraparte={fin_without_counterparty:,} "
+        f"multi_contraparte={fin_with_multiple_counterparties:,}"
+    )
     if fin_tipo_invalid > 0:
         passed = False
         log("PRECHECK FAIL: tipo financeiro inválido após transformação", "ERROR")
