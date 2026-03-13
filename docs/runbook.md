@@ -9,6 +9,9 @@ Operar a carga automática noturna MySQL -> Supabase com validação pós-ETL e 
 - Cron UTC: `0 4 * * *`
 - Fortaleza (UTC-3): **01:00 diariamente**
 - O agendamento roda no branch padrão (`main`).
+- Backup separado: `Nightly DB Backup`
+- Cron UTC do backup: `30 3 * * *`
+- Fortaleza (UTC-3): **00:30 diariamente**
 
 ## Fluxo executado
 1. `check_env` em modo produção (fail-fast)
@@ -43,13 +46,15 @@ Configurações úteis:
 
 ## Confiabilidade
 - `concurrency`: evita sobreposição de runs noturnos
-- `timeout-minutes`: 90
+- `timeout-minutes`: 180
 - retry simples do `daily_job`: até 2 tentativas com backoff
+- checkout do repositório com retry explícito no workflow
 - em falha de fetch/import, truncate e ETL não são executados
 
 ## Artifacts e observabilidade
 Sempre publicados (`if: always()`):
 - `logs/*.log`
+- `logs/04_verify_diagnostics.json`
 - `backups/manifest.json`
 - `backups/verify_baseline.json`
 
@@ -67,3 +72,4 @@ Marcos esperados no log:
 - `Import dump` falhou: dump inválido ou indisponibilidade do MySQL service.
 - `Truncate` falhou: `TRUNCATE_CONFIRM` não está `YES` ou URL do Postgres inválida.
 - `Verify Supabase load` falhou: carga vazia, dados antigos ou baseline inconsistente.
+- `verify_diagnostics.json`: mostra counts, coluna temporal usada, idade máxima calculada e resultado do `VERIFY_MIN_DATE`.

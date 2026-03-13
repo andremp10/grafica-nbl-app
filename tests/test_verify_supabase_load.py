@@ -53,6 +53,7 @@ def _base_env(tmp_path: Path) -> dict[str, str]:
         "VERIFY_RECENCY_COLUMNS": "updated_at,created_at",
         "VERIFY_MAX_AGE_HOURS": "72",
         "VERIFY_BASELINE_PATH": str(tmp_path / "verify_baseline.json"),
+        "VERIFY_DIAGNOSTICS_PATH": str(tmp_path / "verify_diagnostics.json"),
     }
 
 
@@ -71,6 +72,10 @@ def test_verify_success_with_recency(tmp_path: Path):
     baseline = json.loads((tmp_path / "verify_baseline.json").read_text(encoding="utf-8"))
     assert baseline["counts"]["is_pedidos"] == 10
     assert baseline["counts"]["is_clientes"] == 5
+    diagnostics = json.loads((tmp_path / "verify_diagnostics.json").read_text(encoding="utf-8"))
+    assert diagnostics["status"] == "success"
+    assert diagnostics["counts"]["is_pedidos"] == 10
+    assert diagnostics["recency"]["selected_column"] == "created_at"
 
 
 def test_verify_fails_when_key_table_empty(tmp_path: Path):
@@ -82,6 +87,9 @@ def test_verify_fails_when_key_table_empty(tmp_path: Path):
         with patch("scripts.verify_supabase_load.psycopg2.connect", return_value=conn):
             with pytest.raises(RuntimeError, match="is_pedidos"):
                 verify_supabase_load()
+    diagnostics = json.loads((tmp_path / "verify_diagnostics.json").read_text(encoding="utf-8"))
+    assert diagnostics["status"] == "failed"
+    assert "is_pedidos" in diagnostics["error"]
 
 
 def test_verify_fallback_to_baseline_when_no_recency_column(tmp_path: Path):

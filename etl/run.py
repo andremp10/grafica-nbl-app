@@ -1431,9 +1431,40 @@ def pg_upsert(
                 row_vals.append(v)
         values.append(tuple(row_vals))
 
-    try:
+    def _execute_batch(batch_values: List[Tuple[Any, ...]]) -> None:
         with conn.cursor() as cur:
-            execute_values(cur, sql, values, page_size=len(values))
+            execute_values(cur, sql, batch_values, page_size=len(batch_values))
+
+    row_error_logs = {"count": 0}
+
+    def _retry_with_split(rows_and_values: List[Tuple[dict, Tuple[Any, ...]]]) -> Tuple[int, int]:
+        if not rows_and_values:
+            return 0, 0
+
+        batch_values = [row_vals for _, row_vals in rows_and_values]
+        try:
+            _execute_batch(batch_values)
+            conn.commit()
+            return len(rows_and_values), 0
+        except Exception as split_err:
+            conn.rollback()
+            if len(rows_and_values) == 1:
+                source_row, _ = rows_and_values[0]
+                legacy_id = source_row.get("__legacy_id")
+                msg = str(split_err)[:200]
+                if row_error_logs["count"] < 3 and msg and "Row error:" not in msg:
+                    log(f"    Row error: {msg}", "WARN")
+                    row_error_logs["count"] += 1
+                record_etl_error(table, legacy_id, str(split_err), stage="row_insert")
+                return 0, 1
+
+            mid = len(rows_and_values) // 2
+            left_ok, left_err = _retry_with_split(rows_and_values[:mid])
+            right_ok, right_err = _retry_with_split(rows_and_values[mid:])
+            return left_ok + right_ok, left_err + right_err
+
+    try:
+        _execute_batch(values)
         conn.commit()
         return len(batch), 0
     except Exception as batch_err:
@@ -1444,22 +1475,8 @@ def pg_upsert(
             err_str = err_str[:300] + "..."
         log(f"    Batch error ({table}): {err_str}", "WARN")
         record_etl_error(table, None, str(batch_err), stage="batch_insert")
-        # Fallback: row-by-row
-        ok, err = 0, 0
-        for source_row, row_vals in zip(batch, values):
-            legacy_id = source_row.get("__legacy_id")
-            try:
-                with conn.cursor() as cur:
-                    execute_values(cur, sql, [row_vals], page_size=1)
-                conn.commit()
-                ok += 1
-            except Exception as row_e:
-                conn.rollback()
-                if err < 3:
-                    log(f"    Row error: {str(row_e)[:200]}", "WARN")
-                record_etl_error(table, legacy_id, str(row_e), stage="row_insert")
-                err += 1
-        return ok, err
+        # Fallback: split em blocos menores para evitar commit por linha quando há poucos erros.
+        return _retry_with_split(list(zip(batch, values)))
 
 
 def pg_flush(conn, table, batch, conflict_col, ok, err):

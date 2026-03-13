@@ -157,6 +157,11 @@ def _save_baseline(path: Path, counts: dict[str, int]) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
+def _save_diagnostics(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
 def verify_supabase_load() -> None:
     db_url = _require_env("SUPABASE_DB_URL")
     tables = _parse_tables(os.getenv("VERIFY_TABLES", "is_pedidos,is_clientes"))
@@ -182,6 +187,7 @@ def verify_supabase_load() -> None:
     ]
     min_date_min_rows = int(os.getenv("VERIFY_MIN_DATE_MIN_ROWS", "1"))
     baseline_path = Path(os.getenv("VERIFY_BASELINE_PATH", "./backups/verify_baseline.json"))
+    diagnostics_path = Path(os.getenv("VERIFY_DIAGNOSTICS_PATH", "./logs/verify_diagnostics.json"))
 
     if recency_table not in tables:
         raise ValueError("VERIFY_RECENCY_TABLE must be present in VERIFY_TABLES")
@@ -191,76 +197,115 @@ def verify_supabase_load() -> None:
     log.info("Verifying row counts in %s", ", ".join(tables))
 
     counts: dict[str, int] = {}
-    with psycopg2.connect(db_url) as conn:
-        with conn.cursor() as cur:
-            for table in tables:
-                count = _count_rows(cur, table)
-                counts[table] = count
-                required = min_rows_by_table[table]
-                if count < required:
-                    raise RuntimeError(
-                        f"verification failed: table '{table}' has {count} rows (< {required})"
-                    )
-                log.info("[VERIFY OK] table=%s count=%d min_required=%d", table, count, required)
+    diagnostics = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "status": "running",
+        "tables": tables,
+        "min_rows_by_table": min_rows_by_table,
+        "counts": counts,
+        "recency": {
+            "table": recency_table,
+            "candidates": recency_candidates,
+            "selected_column": None,
+            "max_age_hours_threshold": max_age_hours,
+            "age_hours": None,
+            "baseline_previous_count": None,
+        },
+        "min_date": {
+            "enabled": bool(min_date_raw),
+            "table": min_date_table,
+            "candidates": min_date_candidates,
+            "threshold": min_date_raw or None,
+            "min_rows": min_date_min_rows,
+            "selected_column": None,
+            "rows_after": None,
+        },
+        "baseline_path": str(baseline_path),
+    }
 
-            recency_column = _find_recency_column(cur, recency_table, recency_candidates)
-            if recency_column:
-                age_hours = _max_age_hours(cur, recency_table, recency_column)
-                if age_hours is None:
-                    raise RuntimeError(
-                        f"verification failed: '{recency_table}.{recency_column}' has no non-null values"
-                    )
-                if age_hours > max_age_hours:
-                    raise RuntimeError(
-                        f"verification failed: data too old in '{recency_table}.{recency_column}' "
-                        f"({age_hours:.2f}h > {max_age_hours:.2f}h)"
-                    )
-                log.info(
-                    "[VERIFY OK] recency table=%s column=%s age_hours=%.2f",
-                    recency_table,
-                    recency_column,
-                    age_hours,
-                )
-            else:
-                baseline = _load_baseline(baseline_path)
-                previous = baseline.get("counts", {}).get(recency_table)
-                current = counts[recency_table]
-                if previous is not None and current == previous:
-                    raise RuntimeError(
-                        "verification failed: no recency column and rowcount did not change "
-                        f"for '{recency_table}' (current={current}, previous={previous})"
-                    )
-                log.info(
-                    "[VERIFY OK] no recency column in %s; baseline comparison passed (previous=%s current=%s)",
-                    recency_table,
-                    previous,
-                    current,
-                )
+    try:
+        with psycopg2.connect(db_url) as conn:
+            with conn.cursor() as cur:
+                for table in tables:
+                    count = _count_rows(cur, table)
+                    counts[table] = count
+                    required = min_rows_by_table[table]
+                    if count < required:
+                        raise RuntimeError(
+                            f"verification failed: table '{table}' has {count} rows (< {required})"
+                        )
+                    log.info("[VERIFY OK] table=%s count=%d min_required=%d", table, count, required)
 
-            if min_date_raw:
-                min_dt = _parse_iso_datetime(min_date_raw)
-                min_col = _find_recency_column(cur, min_date_table, min_date_candidates)
-                if not min_col:
-                    raise RuntimeError(
-                        "verification failed: no suitable date column found for VERIFY_MIN_DATE "
-                        f"in table '{min_date_table}'"
+                recency_column = _find_recency_column(cur, recency_table, recency_candidates)
+                diagnostics["recency"]["selected_column"] = recency_column
+                if recency_column:
+                    age_hours = _max_age_hours(cur, recency_table, recency_column)
+                    diagnostics["recency"]["age_hours"] = age_hours
+                    if age_hours is None:
+                        raise RuntimeError(
+                            f"verification failed: '{recency_table}.{recency_column}' has no non-null values"
+                        )
+                    if age_hours > max_age_hours:
+                        raise RuntimeError(
+                            f"verification failed: data too old in '{recency_table}.{recency_column}' "
+                            f"({age_hours:.2f}h > {max_age_hours:.2f}h)"
+                        )
+                    log.info(
+                        "[VERIFY OK] recency table=%s column=%s age_hours=%.2f",
+                        recency_table,
+                        recency_column,
+                        age_hours,
                     )
-                rows_after = _count_rows_after(cur, min_date_table, min_col, min_dt)
-                if rows_after < min_date_min_rows:
-                    raise RuntimeError(
-                        "verification failed: expected rows after VERIFY_MIN_DATE "
-                        f"({min_date_raw}) in '{min_date_table}.{min_col}', got {rows_after}"
+                else:
+                    baseline = _load_baseline(baseline_path)
+                    previous = baseline.get("counts", {}).get(recency_table)
+                    current = counts[recency_table]
+                    diagnostics["recency"]["baseline_previous_count"] = previous
+                    if previous is not None and current == previous:
+                        raise RuntimeError(
+                            "verification failed: no recency column and rowcount did not change "
+                            f"for '{recency_table}' (current={current}, previous={previous})"
+                        )
+                    log.info(
+                        "[VERIFY OK] no recency column in %s; baseline comparison passed (previous=%s current=%s)",
+                        recency_table,
+                        previous,
+                        current,
                     )
-                log.info(
-                    "[VERIFY OK] min-date table=%s column=%s threshold=%s rows=%d",
-                    min_date_table,
-                    min_col,
-                    min_date_raw,
-                    rows_after,
-                )
 
-    _save_baseline(baseline_path, counts)
-    log.info("Supabase load verification completed successfully.")
+                if min_date_raw:
+                    min_dt = _parse_iso_datetime(min_date_raw)
+                    min_col = _find_recency_column(cur, min_date_table, min_date_candidates)
+                    diagnostics["min_date"]["selected_column"] = min_col
+                    if not min_col:
+                        raise RuntimeError(
+                            "verification failed: no suitable date column found for VERIFY_MIN_DATE "
+                            f"in table '{min_date_table}'"
+                        )
+                    rows_after = _count_rows_after(cur, min_date_table, min_col, min_dt)
+                    diagnostics["min_date"]["rows_after"] = rows_after
+                    if rows_after < min_date_min_rows:
+                        raise RuntimeError(
+                            "verification failed: expected rows after VERIFY_MIN_DATE "
+                            f"({min_date_raw}) in '{min_date_table}.{min_col}', got {rows_after}"
+                        )
+                    log.info(
+                        "[VERIFY OK] min-date table=%s column=%s threshold=%s rows=%d",
+                        min_date_table,
+                        min_col,
+                        min_date_raw,
+                        rows_after,
+                    )
+
+        _save_baseline(baseline_path, counts)
+        diagnostics["status"] = "success"
+        log.info("Supabase load verification completed successfully.")
+    except Exception as exc:
+        diagnostics["status"] = "failed"
+        diagnostics["error"] = str(exc)
+        raise
+    finally:
+        _save_diagnostics(diagnostics_path, diagnostics)
 
 
 def main() -> None:

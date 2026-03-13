@@ -1,0 +1,88 @@
+name: Nightly DB Backup
+
+on:
+  schedule:
+    - cron: '30 3 * * *'  # 03:30 UTC = 00:30 Fortaleza (UTC-3)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-db-backup-main
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    name: Supabase Daily Backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TZ: 'America/Fortaleza'
+      BACKUP_DIR: 'db_backups'
+
+    steps:
+      - name: Create backup directory
+        run: mkdir -p "${BACKUP_DIR}"
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Dump Supabase
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          stamp="$(date +%Y%m%d_%H%M%S)"
+          dump_path="${BACKUP_DIR}/supabase_${stamp}.dump"
+          toc_path="${dump_path}.toc"
+          sha_path="${dump_path}.sha256"
+          manifest_path="${BACKUP_DIR}/manifest_${stamp}.json"
+
+          pg_dump \
+            --format=custom \
+            --compress=9 \
+            --no-owner \
+            --no-privileges \
+            --file "${dump_path}" \
+            "${SUPABASE_DB_URL}"
+
+          pg_restore -l "${dump_path}" > "${toc_path}"
+          sha256sum "${dump_path}" | tee "${sha_path}"
+
+          DUMP_PATH="${dump_path}" SHA_PATH="${sha_path}" TOC_PATH="${toc_path}" MANIFEST_PATH="${manifest_path}" python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          dump_path = Path(os.environ["DUMP_PATH"])
+          sha_path = Path(os.environ["SHA_PATH"])
+          toc_path = Path(os.environ["TOC_PATH"])
+          manifest_path = Path(os.environ["MANIFEST_PATH"])
+          sha256 = sha_path.read_text(encoding="utf-8").split()[0]
+
+          payload = {
+              "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+              "dump_file": dump_path.name,
+              "toc_file": toc_path.name,
+              "sha256_file": sha_path.name,
+              "size_bytes": dump_path.stat().st_size,
+              "sha256": sha256,
+              "integrity_check": "pg_restore -l OK",
+          }
+          manifest_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+          print(manifest_path)
+          PY
+
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: |
+            db_backups/*
+          retention-days: 30
+          if-no-files-found: error

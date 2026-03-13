@@ -5,6 +5,9 @@ on:
     - cron: '0 4 * * *'  # 04:00 UTC = 01:00 Fortaleza (UTC-3)
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: nightly-etl-main
   cancel-in-progress: true
@@ -13,7 +16,7 @@ jobs:
   etl:
     name: ETL Nightly (schedule)
     runs-on: ubuntu-latest
-    timeout-minutes: 43200  # 30 dias — máximo; GitHub aplica seu próprio limite de plataforma
+    timeout-minutes: 180
     env:
       BACKUP_PROTOCOL: ${{ secrets.BACKUP_PROTOCOL }}
       BACKUP_REMOTE_DIR: '/var/lib/vz/dump'
@@ -49,10 +52,33 @@ jobs:
       VERIFY_MIN_DATE_COLUMNS: 'created_at'
       VERIFY_MIN_DATE_MIN_ROWS: '1'
       VERIFY_BASELINE_PATH: './backups/verify_baseline.json'
+      VERIFY_DIAGNOSTICS_PATH: './logs/04_verify_diagnostics.json'
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout repository (retry)
+        env:
+          REPO_URL: https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+        run: |
+          set -euo pipefail
+          attempts=3
+          for attempt in $(seq 1 ${attempts}); do
+            echo "checkout attempt ${attempt}/${attempts}"
+            rm -rf .git
+            git init .
+            git config --global --add safe.directory "$PWD"
+            git remote add origin "${REPO_URL}"
+            if git fetch --depth=1 origin "${GITHUB_SHA}" && git checkout --force FETCH_HEAD; then
+              git clean -ffdx
+              exit 0
+            fi
+            git remote remove origin || true
+            rm -rf .git
+            if [ "${attempt}" -lt "${attempts}" ]; then
+              sleep $((attempt * 15))
+            fi
+          done
+          echo "checkout failed after ${attempts} attempts"
+          exit 1
 
       - name: Confirm main branch schedule
         run: |
@@ -62,7 +88,7 @@ jobs:
           fi
 
       - name: Setup Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
           cache: pip
@@ -210,14 +236,18 @@ jobs:
           if [ ! -f backups/verify_baseline.json ]; then
             echo "{}" > backups/verify_baseline.json
           fi
+          if [ ! -f logs/04_verify_diagnostics.json ]; then
+            echo '{"status":"not_generated","reason":"verify_step_not_reached"}' > logs/04_verify_diagnostics.json
+          fi
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: etl-logs-${{ github.run_id }}
           path: |
             logs/*.log
+            logs/04_verify_diagnostics.json
             backups/manifest.json
             backups/verify_baseline.json
           retention-days: 14

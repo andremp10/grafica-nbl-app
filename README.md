@@ -14,6 +14,12 @@ Pipeline de produção para carga diária automática:
 - Horário Fortaleza (UTC-3): **01:00 da madrugada, diariamente**
 - Execução ocorre no branch padrão (`main`) do repositório.
 
+## Backup diário
+- Workflow dedicado: `.github/workflows/nightly_db_backup.yml`
+- Cron UTC: `30 3 * * *`
+- Horário Fortaleza (UTC-3): **00:30 da madrugada, diariamente**
+- Gera `pg_dump` em formato custom, valida com `pg_restore -l` e publica artifact com retenção de 30 dias.
+
 ## Fonte de backup (produção)
 - FTP host: `162.241.203.52`
 - Diretório remoto: `/public_html/.well-known/backup-jet`
@@ -38,6 +44,7 @@ Quando `BACKUP_PROTOCOL=sftp`, também configurar:
 ## Logs e artifacts
 Em todo run (sucesso ou falha), o workflow publica:
 - `logs/*.log`
+- `logs/04_verify_diagnostics.json`
 - `backups/manifest.json`
 - `backups/verify_baseline.json`
 
