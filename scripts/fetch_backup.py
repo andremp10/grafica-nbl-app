@@ -67,6 +67,30 @@ PREFIX = _clean_env(os.getenv("BACKUP_FILENAME_PREFIX", "nblgrafica_app-"))
 EXT = _clean_env(os.getenv("BACKUP_EXTENSION", ".sql"))
 LOCAL_DIR = Path(_clean_env(os.getenv("BACKUP_LOCAL_DIR", "./backups")))
 
+def _parse_timeout(name: str, default: int) -> int:
+    raw = _clean_env(os.getenv(name, ""))
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logging.getLogger("fetch_backup").warning(
+            "%s inválido (%r). Usando default=%d.", name, raw, default
+        )
+        return default
+    if value <= 0:
+        logging.getLogger("fetch_backup").warning(
+            "%s deve ser > 0 (got=%r). Usando default=%d.", name, raw, default
+        )
+        return default
+    return value
+
+
+# Timeouts (seconds)
+DEFAULT_TIMEOUT = _parse_timeout("BACKUP_TIMEOUT", 30)
+SFTP_TIMEOUT = _parse_timeout("BACKUP_SFTP_TIMEOUT", DEFAULT_TIMEOUT)
+FTP_TIMEOUT = _parse_timeout("BACKUP_FTP_TIMEOUT", DEFAULT_TIMEOUT)
+
 DATE_PATTERN = re.compile(
     r"^" + re.escape(PREFIX) + r"(\d{4}-\d{2}-\d{2})" + re.escape(EXT) + r"$"
 )
@@ -162,7 +186,7 @@ def _fetch_sftp(target_date: date | None, dest_dir: Path) -> Path:
     connect_kwargs: dict = {
         "username": SFTP_USER,
         "port": SFTP_PORT,
-        "timeout": 30,
+        "timeout": SFTP_TIMEOUT,
         "allow_agent": False,
         "look_for_keys": False,
     }
@@ -204,22 +228,27 @@ def _fetch_ftp(target_date: date | None, dest_dir: Path, use_tls: bool = False) 
     proto = "FTPS" if use_tls else "FTP"
     log.info("%s: connecting to %s:%d as '%s'...", proto, FTP_HOST, FTP_PORT, FTP_USER)
 
-    ftp: ftplib.FTP
-    if use_tls:
-        ftp = ftplib.FTP_TLS()
-    else:
-        ftp = ftplib.FTP()
-
-    ftp.connect(FTP_HOST, FTP_PORT, timeout=30)
-    ftp.login(FTP_USER, FTP_PASSWORD)
-    if use_tls and isinstance(ftp, ftplib.FTP_TLS):
-        ftp.prot_p()
-    ftp.set_pasv(True)
-
     remote_dir = FTP_REMOTE_DIR or "."
-    log.info("%s: entering remote dir '%s'", proto, remote_dir)
-    if remote_dir != ".":
-        ftp.cwd(remote_dir)
+
+    def _connect() -> ftplib.FTP:
+        ftp: ftplib.FTP
+        if use_tls:
+            ftp = ftplib.FTP_TLS()
+        else:
+            ftp = ftplib.FTP()
+
+        ftp.connect(FTP_HOST, FTP_PORT, timeout=FTP_TIMEOUT)
+        ftp.login(FTP_USER, FTP_PASSWORD)
+        if use_tls and isinstance(ftp, ftplib.FTP_TLS):
+            ftp.prot_p()
+        ftp.set_pasv(True)
+
+        log.info("%s: entering remote dir '%s'", proto, remote_dir)
+        if remote_dir != ".":
+            ftp.cwd(remote_dir)
+        return ftp
+
+    ftp = _connect()
 
     file_list: list[tuple[str, datetime | None]] = []
     try:
@@ -239,9 +268,57 @@ def _fetch_ftp(target_date: date | None, dest_dir: Path, use_tls: bool = False) 
     local_path = dest_dir / fname
 
     log.info("%s: downloading %s -> %s", proto, fname, local_path)
-    with open(local_path, "wb") as f:
-        ftp.retrbinary(f"RETR {fname}", f.write)
-    ftp.quit()
+    max_attempts = _parse_timeout("BACKUP_FTP_RETRIES", 6)
+    blocksize = _parse_timeout("BACKUP_FTP_BLOCKSIZE", 1024 * 1024)
+
+    remote_size = None
+    try:
+        remote_size = ftp.size(fname)
+    except Exception:
+        remote_size = None
+
+    # Resume if a partial file exists.
+    try:
+        offset = local_path.stat().st_size
+    except FileNotFoundError:
+        offset = 0
+
+    if remote_size is not None and offset and offset > int(remote_size):
+        log.warning("Local file is larger than remote. Restarting download: %s", local_path)
+        local_path.unlink(missing_ok=True)
+        offset = 0
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            if offset:
+                log.info("%s: resuming at %d bytes (%d/%d)", proto, offset, attempt, max_attempts)
+            mode = "ab" if offset else "wb"
+            with open(local_path, mode) as f:
+                ftp.retrbinary(
+                    f"RETR {fname}",
+                    f.write,
+                    blocksize=blocksize,
+                    rest=offset or None,
+                )
+            break
+        except Exception as exc:
+            log.warning("%s: download attempt %d/%d failed (%s)", proto, attempt, max_attempts, exc)
+            try:
+                ftp.close()
+            except Exception:
+                pass
+            if attempt >= max_attempts:
+                raise
+            ftp = _connect()
+            try:
+                offset = local_path.stat().st_size
+            except FileNotFoundError:
+                offset = 0
+
+    try:
+        ftp.quit()
+    except Exception:
+        ftp.close()
 
     _validate_local(local_path)
     return local_path

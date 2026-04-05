@@ -62,7 +62,8 @@
     "wpp_verificado": "wpp_verificado",
     "logotipo": "logotipo",
     "pagarme_id": "pagarme_id",
-    "created_at": "data"
+    "created_at": "data",
+    "erp_id": "id"
   },
   "is_clientes_enderecos": {
     "id": "id",
@@ -237,7 +238,8 @@
     "vars_select": "vars_select",
     "vars_obrig": "vars_obrig",
     "vars_agrupadas": "vars_agrupadas",
-    "vars_combinacao": "vars_combinacao"
+    "vars_combinacao": "vars_combinacao",
+    "erp_id": "id"
   },
   "is_produtos_servicos": {
     "id": "id",
@@ -382,7 +384,8 @@
     "pdv_id": "pdv",
     "caixa_id": "caixa",
     "devolucao_completa": "devolucao_completa",
-    "created_at": "data"
+    "created_at": "data",
+    "erp_id": "id"
   },
   "is_pedidos_itens": {
     "id": "id",
@@ -415,7 +418,8 @@
     "vars_detalhes": "vars_detalhes",
     "json": "json",
     "categoria": "categoria",
-    "revendedor": "revendedor"
+    "revendedor": "revendedor",
+    "erp_id": "id"
   },
   "is_pedidos_itens_briefings": {
     "id": "id",
@@ -462,7 +466,8 @@
     "status_id": "status",
     "usuario_id": "usuario",
     "obs": "obs",
-    "created_at": "data"
+    "created_at": "data",
+    "erp_id": "id"
   },
   "is_pedidos_pagamentos": {
     "id": "id",
@@ -484,7 +489,8 @@
     "caixa_id": "caixa",
     "original_id": "original",
     "bandeira": "bandeira",
-    "created_at": "data"
+    "created_at": "data",
+    "erp_id": "id"
   },
   "is_pedidos_pag_reprovados": {
     "id": "id",
@@ -699,7 +705,8 @@
     "vale": "vale",
     "vale_vencimento": "vale_vencimento",
     "cargo": "cargo",
-    "obs": "obs"
+    "obs": "obs",
+    "erp_id": "id"
   },
   "is_financeiro_transportadoras": {
     "id": "id",
@@ -771,7 +778,8 @@
     "conciliacao_movimentacao": "conciliacao_movimentacao",
     "conciliacao_pagto": "conciliacao_pagto",
     "neutro": "neutro",
-    "repetir": "repetir"
+    "repetir": "repetir",
+    "erp_id": "id"
   },
   "is_financeiro_repeticoes": {
     "id": "id",

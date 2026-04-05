@@ -448,7 +448,7 @@ COLUMN_MAPPING: Dict[str, Dict[str, str]] = {
         "minimo_c": "minimo_c", "limite_c": "limite_c",
     },
     "is_financeiro_funcionarios": {
-        "id": "id", "nome": "nome", "sobrenome": "sobrenome",
+        "erp_id": "id", "id": "id", "nome": "nome", "sobrenome": "sobrenome",
         "nascimento": "nascimento", "cpf": "cpf", "rg": "rg",
         "sexo": "sexo", "telefone": "telefone", "celular": "celular",
         "cep": "cep", "logradouro": "logradouro", "numero": "numero",
@@ -467,7 +467,7 @@ COLUMN_MAPPING: Dict[str, Dict[str, str]] = {
         "id": "id", "nome": "nome", "status": "status",
     },
     "is_produtos": {
-        "id": "id", "url": "url", "titulo": "titulo",
+        "erp_id": "id", "id": "id", "url": "url", "titulo": "titulo",
         "sku": "sku", "gtin": "gtin", "mpn": "mpn", "ncm": "ncm",
         "descricao_curta": "descricao_curta", "descricao_html": "descricao_html",
         "meta_title": "meta_title", "meta_description": "meta_description",
@@ -490,7 +490,7 @@ COLUMN_MAPPING: Dict[str, Dict[str, str]] = {
         "id": "id", "nome": "nome", "texto_exibicao": "texto_exibicao",
     },
     "is_clientes": {
-        "id": "id", "saldo": "saldo", "tipo": "tipo",
+        "erp_id": "id", "id": "id", "saldo": "saldo", "tipo": "tipo",
         "telefone": "telefone", "celular": "celular",
         "email_log": "email_log", "senha_log": "senha_log",
         "ultimo_acesso": "ultimo_acesso", "ip": "ip", "status": "status",
@@ -553,7 +553,7 @@ COLUMN_MAPPING: Dict[str, Dict[str, str]] = {
         "cupom_id": "cupom", "produto_id": "produto",
     },
     "is_financeiro_lancamentos": {
-        "id": "id", "descricao": "descricao", "valor": "valor",
+        "erp_id": "id", "id": "id", "descricao": "descricao", "valor": "valor",
         "data": "data", "data_pagto": "data_pagto", "data_emissao": "data_emissao",
         "categoria_id": "categoria", "obs": "obs", "anexo": "anexo",
         "carteira_id": "carteira", "tipo": "tipo", "status": "status",
@@ -567,7 +567,7 @@ COLUMN_MAPPING: Dict[str, Dict[str, str]] = {
         "neutro": "neutro", "repetir": "repetir",
     },
     "is_pedidos": {
-        "id": "id", "cliente_id": "cliente", "usuario_id": "usuario",
+        "erp_id": "id", "id": "id", "cliente_id": "cliente", "usuario_id": "usuario",
         "total": "total", "acrescimo": "acrescimo", "desconto": "desconto",
         "desconto_uso": "desconto_uso", "sinal": "sinal",
         "frete_valor": "frete_valor", "frete_tipo": "frete_tipo",
@@ -589,7 +589,7 @@ COLUMN_MAPPING: Dict[str, Dict[str, str]] = {
         "id": "id", "pedido_id": "pedido",
     },
     "is_pedidos_itens": {
-        "id": "id", "pedido_id": "pedido", "produto_id": "produto",
+        "erp_id": "id", "id": "id", "pedido_id": "pedido", "produto_id": "produto",
         "descricao": "descricao", "status": "status", "qtde": "qtde",
         "valor": "valor", "arte_valor": "arte_valor", "arte_tipo": "arte_tipo",
         "arte_status": "arte_status", "arte_arquivo": "arte_arquivo",
@@ -605,7 +605,7 @@ COLUMN_MAPPING: Dict[str, Dict[str, str]] = {
         "json": "json", "categoria": "categoria", "revendedor": "revendedor",
     },
     "is_pedidos_pagamentos": {
-        "id": "id", "cliente_id": "cliente", "pedido_id": "pedido",
+        "erp_id": "id", "id": "id", "cliente_id": "cliente", "pedido_id": "pedido",
         "forma": "forma", "condicao": "condicao", "valor": "valor",
         "status": "status", "link": "link", "visto": "visto",
         "saldo_anterior": "saldo_anterior", "saldo_atual": "saldo_atual",
@@ -626,7 +626,7 @@ COLUMN_MAPPING: Dict[str, Dict[str, str]] = {
         "obs": "obs", "valor": "valor", "created_at": "data",
     },
     "is_pedidos_historico": {
-        "id": "id", "pedido_id": "pedido", "item_id": "item",
+        "erp_id": "id", "id": "id", "pedido_id": "pedido", "item_id": "item",
         "status_id": "status", "usuario_id": "usuario",
         "obs": "obs", "created_at": "data",
     },
