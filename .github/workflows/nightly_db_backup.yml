@@ -84,7 +84,7 @@ jobs:
           PY
 
       - name: Upload backup artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: db-backup-${{ github.run_id }}
