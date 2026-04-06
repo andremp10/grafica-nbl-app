@@ -10,7 +10,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from scripts.error_log_sink import ensure_run_id, persist_error_event
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.error_log_sink import ensure_run_id, persist_error_event  # noqa: E402
 
 load_dotenv()
 

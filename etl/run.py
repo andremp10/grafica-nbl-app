@@ -28,6 +28,10 @@ import datetime as dt
 from pathlib import Path
 from typing import Optional, Dict, Any, Set, List, Tuple, Callable
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from dotenv import load_dotenv
 from scripts.error_log_sink import (
     build_error_event,

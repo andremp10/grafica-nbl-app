@@ -14,7 +14,11 @@ from pathlib import Path
 import psycopg2
 from dotenv import load_dotenv
 
-from scripts.error_log_sink import capture_traceback, ensure_run_id, persist_error_event, read_json_file
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from scripts.error_log_sink import capture_traceback, ensure_run_id, persist_error_event, read_json_file  # noqa: E402
 
 load_dotenv()
 
