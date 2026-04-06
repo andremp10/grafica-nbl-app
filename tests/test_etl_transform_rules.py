@@ -81,3 +81,24 @@ def test_run_uses_json_mapping_as_source_of_truth() -> None:
     payload = json.loads(etl_run.MAPPING_PATH.read_text(encoding="utf-8"))
     assert etl_run.COLUMN_MAPPING == payload
     assert "is_financeiro_lancamentos" in etl_run.COLUMN_MAPPING
+
+
+@pytest.mark.parametrize(
+    ("table", "row", "transform"),
+    [
+        ("is_clientes", {"id": 123, "tipo": "fisica"}, lambda row: etl_run.transform_cliente(row)),
+        ("is_financeiro_funcionarios", {"id": 123}, lambda row: etl_run.transform_row(row, "is_financeiro_funcionarios", etl_run.COLUMN_MAPPING["is_financeiro_funcionarios"])),
+        ("is_produtos", {"id": 123}, lambda row: etl_run.transform_row(row, "is_produtos", etl_run.COLUMN_MAPPING["is_produtos"])),
+        ("is_financeiro_lancamentos", {"id": 123, "tipo": 1}, lambda row: etl_run.transform_row(row, "is_financeiro_lancamentos", etl_run.COLUMN_MAPPING["is_financeiro_lancamentos"])),
+        ("is_pedidos", {"id": 123}, lambda row: etl_run.transform_pedido(row, set())),
+        ("is_pedidos_itens", {"id": 123}, lambda row: etl_run.transform_row(row, "is_pedidos_itens", etl_run.COLUMN_MAPPING["is_pedidos_itens"])),
+        ("is_pedidos_pagamentos", {"id": 123}, lambda row: etl_run.transform_pagamento(row)),
+        ("is_pedidos_historico", {"id": 123}, lambda row: etl_run.transform_row(row, "is_pedidos_historico", etl_run.COLUMN_MAPPING["is_pedidos_historico"])),
+    ],
+)
+def test_erp_id_stays_numeric_while_primary_id_remains_uuid(table: str, row: dict, transform) -> None:
+    transformed = transform(row)
+
+    assert transformed is not None
+    assert transformed["erp_id"] == 123
+    assert transformed["id"] == etl_run.uuid5_for(table, 123)

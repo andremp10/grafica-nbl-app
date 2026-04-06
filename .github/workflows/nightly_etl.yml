@@ -1,9 +1,6 @@
 name: Nightly ETL
 
 on:
-  push:
-    branches:
-      - main
   schedule:
     - cron: '0 4 * * *'  # 04:00 UTC = 01:00 Fortaleza (UTC-3)
   workflow_dispatch:
@@ -21,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
-      BACKUP_PROTOCOL: ${{ secrets.BACKUP_PROTOCOL }}
+      BACKUP_PROTOCOL: 'ftp'
       BACKUP_REMOTE_DIR: '/var/lib/vz/dump'
       BACKUP_FTP_REMOTE_DIR: '/public_html/.well-known/backup-jet'
       BACKUP_FILENAME_PREFIX: 'nblgrafica_app-'
@@ -124,9 +121,6 @@ jobs:
 
       - name: Validate required env (production)
         env:
-          BACKUP_SSH_KEY: ${{ secrets.BACKUP_SSH_KEY }}
-          BACKUP_SFTP_HOST: ${{ secrets.BACKUP_SFTP_HOST }}
-          BACKUP_SFTP_USER: ${{ secrets.BACKUP_SFTP_USER }}
           BACKUP_FTP_HOST: ${{ secrets.BACKUP_FTP_HOST }}
           BACKUP_FTP_USER: ${{ secrets.BACKUP_FTP_USER }}
           BACKUP_FTP_PASSWORD: ${{ secrets.BACKUP_FTP_PASSWORD }}
@@ -144,39 +138,30 @@ jobs:
             exit "${rc}"
           fi
 
-      - name: Setup SSH key for SFTP
+      - name: Probe backup source
         env:
-          BACKUP_SSH_KEY: ${{ secrets.BACKUP_SSH_KEY }}
-          BACKUP_SFTP_HOST: ${{ secrets.BACKUP_SFTP_HOST }}
-          BACKUP_KNOWN_HOSTS: ${{ secrets.BACKUP_KNOWN_HOSTS }}
+          BACKUP_FTP_HOST: ${{ secrets.BACKUP_FTP_HOST }}
+          BACKUP_FTP_USER: ${{ secrets.BACKUP_FTP_USER }}
+          BACKUP_FTP_PASSWORD: ${{ secrets.BACKUP_FTP_PASSWORD }}
         run: |
-          proto="$(echo "${BACKUP_PROTOCOL}" | tr '[:upper:]' '[:lower:]')"
-          if [ "${proto}" != "sftp" ]; then
-            echo "SFTP key setup skipped (BACKUP_PROTOCOL=${proto})"
-            exit 0
-          fi
-          mkdir -p ~/.ssh
-          echo "${BACKUP_SSH_KEY}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          if [ -n "${BACKUP_KNOWN_HOSTS}" ]; then
-            echo "${BACKUP_KNOWN_HOSTS}" >> ~/.ssh/known_hosts
-          else
-            ssh-keyscan -p 22 "${BACKUP_SFTP_HOST}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          set -o pipefail
+          python scripts/probe_backup_source.py 2>&1 | tee logs/02_probe_backup.log
+          rc=${PIPESTATUS[0]}
+          if [ "${rc}" -ne 0 ]; then
+            tail_msg="$(tail -n 30 logs/02_probe_backup.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            echo "::error::probe_backup_source failed: ${tail_msg}"
+            exit "${rc}"
           fi
 
       - name: Run daily job (retry up to 2)
         env:
-          BACKUP_PROTOCOL: ${{ secrets.BACKUP_PROTOCOL }}
+          BACKUP_PROTOCOL: 'ftp'
           BACKUP_REMOTE_DIR: '/var/lib/vz/dump'
           BACKUP_FTP_REMOTE_DIR: '/public_html/.well-known/backup-jet'
           BACKUP_FILENAME_PREFIX: 'nblgrafica_app-'
           BACKUP_EXTENSION: '.sql'
           BACKUP_LOCAL_DIR: './backups'
           BACKUP_RETENTION_DAYS: '7'
-          BACKUP_SFTP_HOST: ${{ secrets.BACKUP_SFTP_HOST }}
-          BACKUP_SFTP_PORT: '22'
-          BACKUP_SFTP_USER: ${{ secrets.BACKUP_SFTP_USER }}
-          BACKUP_SSH_KEY_PATH: '~/.ssh/id_rsa'
           BACKUP_FTP_HOST: ${{ secrets.BACKUP_FTP_HOST }}
           BACKUP_FTP_PORT: '21'
           BACKUP_FTP_USER: ${{ secrets.BACKUP_FTP_USER }}
@@ -187,22 +172,22 @@ jobs:
           TRUNCATE_CONFIRM: ${{ secrets.TRUNCATE_CONFIRM }}
         run: |
           set -o pipefail
-          : > logs/02_daily_job.log
+          : > logs/03_daily_job.log
           attempts=2
           for attempt in $(seq 1 ${attempts}); do
-            echo "daily_job attempt ${attempt}/${attempts}" | tee -a logs/02_daily_job.log
-            if python scripts/daily_job.py 2>&1 | tee -a logs/02_daily_job.log; then
-              echo "daily_job succeeded on attempt ${attempt}" | tee -a logs/02_daily_job.log
+            echo "daily_job attempt ${attempt}/${attempts}" | tee -a logs/03_daily_job.log
+            if python scripts/daily_job.py 2>&1 | tee -a logs/03_daily_job.log; then
+              echo "daily_job succeeded on attempt ${attempt}" | tee -a logs/03_daily_job.log
               exit 0
             fi
             if [ "${attempt}" -lt "${attempts}" ]; then
               sleep_time=$((attempt * 30))
-              echo "daily_job failed, retrying in ${sleep_time}s" | tee -a logs/02_daily_job.log
+              echo "daily_job failed, retrying in ${sleep_time}s" | tee -a logs/03_daily_job.log
               sleep "${sleep_time}"
             fi
           done
-          echo "daily_job failed after ${attempts} attempts" | tee -a logs/02_daily_job.log
-          tail_msg="$(tail -n 40 logs/02_daily_job.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+          echo "daily_job failed after ${attempts} attempts" | tee -a logs/03_daily_job.log
+          tail_msg="$(tail -n 40 logs/03_daily_job.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
           echo "::error::daily_job failed: ${tail_msg}"
           exit 1
 
@@ -211,10 +196,10 @@ jobs:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
         run: |
           set -o pipefail
-          python scripts/verify_supabase_load.py 2>&1 | tee logs/03_verify.log
+          python scripts/verify_supabase_load.py 2>&1 | tee logs/04_verify.log
           rc=${PIPESTATUS[0]}
           if [ "${rc}" -ne 0 ]; then
-            tail_msg="$(tail -n 30 logs/03_verify.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
+            tail_msg="$(tail -n 30 logs/04_verify.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g')"
             echo "::error::verify_supabase_load failed: ${tail_msg}"
             exit "${rc}"
           fi

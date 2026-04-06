@@ -410,15 +410,16 @@ TABLE_TYPE_OVERRIDES: Dict[str, Dict[str, str]] = {
     "is_extras_status":            {"visivel": "int", "id": "int_pk"},
     "is_mkt_cupons":               {"tipo": "cupom_tipo", "valor": "money"},  # valor NOT NULL CHECK >= 0
     "is_producao_setores":         {"status": "str"},
-    "is_pedidos_itens":            {"status": "str", "visto": "int"},
-    "is_pedidos_pagamentos":       {"visto": "bool"},
-    "is_produtos":                 {"valor": "str", "visivel": "bool", "prazo": "str"},
-    "is_financeiro_lancamentos":   {"valor": "money", "tipo": "finance_tipo", "status": "int"},
+    "is_pedidos_itens":            {"erp_id": "int", "status": "str", "visto": "int"},
+    "is_pedidos_pagamentos":       {"erp_id": "int", "visto": "bool"},
+    "is_produtos":                 {"erp_id": "int", "valor": "str", "visivel": "bool", "prazo": "str"},
+    "is_financeiro_funcionarios":  {"erp_id": "int"},
+    "is_financeiro_lancamentos":   {"erp_id": "int", "valor": "money", "tipo": "finance_tipo", "status": "int"},
     "is_entregas_fretes":          {"prazo": "int", "tipo": "int"},
     "is_entregas_balcoes":         {"prazo": "str"},
-    "is_pedidos":                  {"frete_tipo": "str", "origem": "int"},
-    "is_pedidos_historico":        {},  # status_id: FK_MAP "_int" trata 0→None corretamente
-    "is_clientes":                 {"status": "int", "retirada": "int", "revendedor": "int", "pdv": "int"},
+    "is_pedidos":                  {"erp_id": "int", "frete_tipo": "str", "origem": "int"},
+    "is_pedidos_historico":        {"erp_id": "int"},  # status_id: FK_MAP "_int" trata 0→None corretamente
+    "is_clientes":                 {"erp_id": "int", "status": "int", "retirada": "int", "revendedor": "int", "pdv": "int"},
     "is_usuarios":                 {"status": "int", "acesso": "int"},
     "is_mkt_regras":               {"tipo": "int"},
     "is_produtos_categorias":      {"status": "int"},

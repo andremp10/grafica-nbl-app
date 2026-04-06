@@ -60,6 +60,7 @@ CREATE TABLE public.is_bancos (
 );
 CREATE TABLE public.is_clientes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  erp_id bigint,
   saldo numeric NOT NULL DEFAULT 0,
   tipo character varying NOT NULL CHECK (upper(tipo::text) = ANY (ARRAY['PF'::text, 'PJ'::text])),
   telefone character varying,
@@ -288,6 +289,7 @@ CREATE TABLE public.is_financeiro_fornecedores (
 );
 CREATE TABLE public.is_financeiro_funcionarios (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  erp_id bigint,
   nome character varying NOT NULL,
   sobrenome character varying,
   nascimento timestamp without time zone,
@@ -315,6 +317,7 @@ CREATE TABLE public.is_financeiro_funcionarios (
 );
 CREATE TABLE public.is_financeiro_lancamentos (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  erp_id bigint,
   descricao character varying,
   valor numeric NOT NULL CHECK (valor >= 0::numeric),
   data timestamp without time zone,
@@ -500,6 +503,7 @@ CREATE TABLE public.is_paginas (
 );
 CREATE TABLE public.is_pedidos (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  erp_id bigint,
   cliente_id uuid NOT NULL,
   usuario_id uuid,
   total numeric NOT NULL,
@@ -645,6 +649,7 @@ CREATE TABLE public.is_pedidos_fretes_retiradas (
 );
 CREATE TABLE public.is_pedidos_historico (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  erp_id bigint,
   pedido_id uuid,
   item_id uuid,
   status_id integer,
@@ -659,6 +664,7 @@ CREATE TABLE public.is_pedidos_historico (
 );
 CREATE TABLE public.is_pedidos_itens (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  erp_id bigint,
   pedido_id uuid NOT NULL,
   produto_id uuid,
   descricao character varying,
@@ -893,6 +899,7 @@ CREATE TABLE public.is_pedidos_pag_reprovados (
 );
 CREATE TABLE public.is_pedidos_pagamentos (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  erp_id bigint,
   cliente_id uuid NOT NULL,
   pedido_id uuid,
   forma character varying NOT NULL,
@@ -930,6 +937,7 @@ CREATE TABLE public.is_producao_setores (
 );
 CREATE TABLE public.is_produtos (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
+  erp_id bigint,
   url character varying,
   titulo character varying NOT NULL,
   sku character varying,
