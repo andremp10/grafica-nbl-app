@@ -528,6 +528,7 @@ Cadastro para folha de pagamento. **NÃO confundir** com `is_usuarios` (operador
 | Coluna | Tipo | Descrição |
 |--------|------|-----------|
 | `id` | uuid | PK |
+| `erp_id` | bigint | ID legado técnico do cadastro de folha no MySQL. Útil para rastreabilidade, mas não deve ser tratado como identificador operacional de operador de pedidos |
 | `nome`/`sobrenome` | varchar | Nome completo |
 | `cpf`/`rg` | varchar | Documentos |
 | `admissao` | date | Início do contrato |
@@ -578,6 +579,7 @@ Cadastro para folha de pagamento. **NÃO confundir** com `is_usuarios` (operador
 **25 registros** | **NÃO são clientes!**
 
 Operadores do painel de gestão: vendedores, gerentes, designers, etc.
+Não possuem `erp_id` nesta modelagem; para relatórios operacionais, identificar pelo nome resolvido e pelo relacionamento via `usuario_id`.
 
 | `acesso` | Nível de permissão |
 |----------|--------------------|

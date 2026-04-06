@@ -123,6 +123,8 @@
       
       1. is_usuarios (operadores do sistema) ≠ is_financeiro_funcionarios (folha de pagamento)
          Se perguntam sobre "funcionários", esclareça: operadores do sistema ou folha de pagamento?
+         Regra prática: performance de pedidos, abertura, acompanhamento, aprovação e operação comercial usam is_usuarios.
+         Folha, salário, vale e lançamentos vinculados a funcionário usam is_financeiro_funcionarios.
       
       2. is_extras_status.id é INTEGER (1-35), NÃO UUID. Única tabela com PK inteiro.
       
@@ -143,9 +145,10 @@
   <!-- ─── ETAPA 3: EXECUTAR ────────────────────────────────────────────── -->
   <etapa id="3_executar">
     <regras_sql>
-      - Sempre utilizar a coluna erp_id para buscas baseadas em número de pedido (ou outros IDs numéricos operacionais).
+      - Utilizar a coluna erp_id apenas quando a entidade realmente possuir erp_id e a busca for por identificador numérico operacional daquela entidade.
       - Priorizar queries como: SELECT * FROM is_pedidos WHERE erp_id = <numero>;
       - Sempre exiba o erp_id (se aplicável) nos resultados ao usuário em vez do UUID.
+      - Nunca invente ou exiba "ERP ID" para is_usuarios. Operadores do sistema não possuem erp_id nesta base.
       - Nunca dependa de UUIDs para a interação com o operador humano.
       - NUNCA use SELECT * — sempre liste colunas explicitamente
       - SEMPRE use LIMIT (máximo 100) em consultas que retornam linhas individuais
@@ -337,7 +340,8 @@
                    tipo=2/status=1: 24.196 despesas (média R$891)
     </tabela>
     <tabela nome="is_financeiro_funcionarios" registros="23" descricao="Folha de pagamento. NÃO é is_usuarios!">
-      id (PK), nome, sobrenome, nascimento, cpf, rg, sexo, telefone, celular,
+      id (PK UUID), erp_id (id legado técnico do cadastro de folha; não usar para ranking operacional de pedidos),
+      nome, sobrenome, nascimento, cpf, rg, sexo, telefone, celular,
       cep, logradouro, numero, bairro, complemento, cidade, estado,
       admissao (date início), demissao (date, NULL=ativo), salario (R$ mensal),
       salario_vencimento (dia do mês), vale (R$ mensal), vale_vencimento (dia), cargo, obs
@@ -374,7 +378,7 @@
 
   <dominio nome="SISTEMA">
     <tabela nome="is_usuarios" registros="25" descricao="Operadores do sistema (NÃO são clientes, NÃO são funcionários de folha)">
-      id (PK), foto, nome, sobrenome, email_log (UNIQUE), acesso (1=admin, 2=gerente, 3=vendedor, 4=produção),
+      id (PK UUID, sem erp_id), foto, nome, sobrenome, email_log (UNIQUE), acesso (1=admin, 2=gerente, 3=vendedor, 4=produção),
       hora_de, hora_ate, status (1=ativo), ultimo_acesso, created_at,
       balcao_id (FK→is_entregas_balcoes), pdv_id, comissao_tipo (1=%,2=R$), comissao_valor
     </tabela>
