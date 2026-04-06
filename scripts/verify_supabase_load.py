@@ -14,6 +14,8 @@ from pathlib import Path
 import psycopg2
 from dotenv import load_dotenv
 
+from scripts.error_log_sink import capture_traceback, ensure_run_id, persist_error_event, read_json_file
+
 load_dotenv()
 
 logging.basicConfig(
@@ -312,6 +314,21 @@ def main() -> None:
     try:
         verify_supabase_load()
     except Exception as exc:
+        diagnostics_path = Path(os.getenv("VERIFY_DIAGNOSTICS_PATH", "./logs/verify_diagnostics.json"))
+        persist_error_event(
+            script_name="scripts/verify_supabase_load.py",
+            step_name="verify_supabase_load",
+            phase="verification",
+            event_type="verify_failure",
+            message=str(exc),
+            error_class=type(exc).__name__,
+            traceback_text=capture_traceback(exc),
+            run_id=ensure_run_id(),
+            details={
+                "diagnostics_path": str(diagnostics_path.resolve()),
+                "diagnostics": read_json_file(diagnostics_path),
+            },
+        )
         log.error("Verification failed: %s", exc)
         sys.exit(1)
 

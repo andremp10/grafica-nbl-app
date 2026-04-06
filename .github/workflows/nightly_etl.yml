@@ -40,6 +40,7 @@ jobs:
       DOCKER_COMPOSE_FILE: 'docker-compose.yml'
       SQL_INPUT_DIR: './sql_input'
       LOGS_DIR: './logs'
+      ETL_RUN_ID: 'gha-${{ github.run_id }}-${{ github.run_attempt }}'
       PYTHONUNBUFFERED: '1'
       VERIFY_TABLES: 'is_pedidos,is_clientes,is_clientes_pf,is_clientes_pj,is_financeiro_lancamentos'
       VERIFY_MIN_ROWS: '1'

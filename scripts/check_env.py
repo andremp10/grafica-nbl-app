@@ -10,6 +10,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from scripts.error_log_sink import ensure_run_id, persist_error_event
+
 load_dotenv()
 
 _ALLOWED_PROTOCOLS = {"sftp", "ftp", "ftps"}
@@ -121,7 +123,7 @@ def _check_truncate_gate(errors: list[str], mode: str) -> None:
         )
 
 
-def check_env(mode: str = "production") -> None:
+def collect_env_errors(mode: str = "production") -> list[str]:
     errors: list[str] = []
 
     for var in _ALWAYS_REQUIRED:
@@ -131,6 +133,11 @@ def check_env(mode: str = "production") -> None:
     _check_format(errors)
     _check_protocol_requirements(errors, mode=mode)
     _check_truncate_gate(errors, mode=mode)
+    return errors
+
+
+def check_env(mode: str = "production") -> None:
+    errors = collect_env_errors(mode=mode)
 
     if errors:
         print(f"\n[check_env] FAIL ({mode}) - {len(errors)} issue(s):\n")
@@ -154,11 +161,20 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    if args.dry_run:
-        check_env(mode="dry-run")
-        return
-
-    check_env(mode=args.mode)
+    mode = "dry-run" if args.dry_run else args.mode
+    errors = collect_env_errors(mode=mode)
+    if errors:
+        persist_error_event(
+            script_name="scripts/check_env.py",
+            step_name="check_env",
+            phase="validation",
+            event_type="env_validation_failure",
+            message=f"{len(errors)} environment validation error(s)",
+            error_class="EnvironmentError",
+            run_id=ensure_run_id(),
+            details={"mode": mode, "errors": errors},
+        )
+    check_env(mode=mode)
 
 
 if __name__ == "__main__":

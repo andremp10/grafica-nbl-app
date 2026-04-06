@@ -29,6 +29,14 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Set, List, Tuple, Callable
 
 from dotenv import load_dotenv
+from scripts.error_log_sink import (
+    build_error_event,
+    capture_traceback,
+    ensure_run_id,
+    persist_error_event,
+    persist_error_events,
+    read_json_file,
+)
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -50,6 +58,7 @@ ERROR_REPORT_PATH = Path(
     os.getenv("ETL_ERRORS_PATH", os.path.join(os.getenv("LOGS_DIR", "./logs"), "etl_errors.json"))
 ).resolve()
 MAX_CAPTURED_ERRORS = int(os.getenv("ETL_MAX_ERROR_REPORT_ROWS", "10000"))
+RUN_ID = ensure_run_id()
 
 # MySQL → Supabase: nomes de tabela diferentes
 MYSQL_TABLE_NAME_MAP = {
@@ -154,9 +163,10 @@ def record_etl_error(
         )
 
 
-def write_etl_error_report(total_errors: int) -> None:
+def write_etl_error_report(total_errors: int) -> dict:
     ERROR_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = {
+        "run_id": RUN_ID,
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "total_errors": int(total_errors),
         "captured_errors": len(ETL_ERRORS),
@@ -164,6 +174,47 @@ def write_etl_error_report(total_errors: int) -> None:
     }
     ERROR_REPORT_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     log(f"Error report saved at {ERROR_REPORT_PATH}", "WARN")
+    return payload
+
+
+def persist_etl_error_report(total_errors: int, stats: Dict[str, Dict[str, int]]) -> dict | None:
+    if total_errors <= 0 and not ETL_ERRORS:
+        return None
+
+    payload = write_etl_error_report(total_errors)
+    events = [
+        build_error_event(
+            run_id=RUN_ID,
+            script_name="etl/run.py",
+            step_name="run_etl",
+            phase="etl",
+            event_type="etl_error_summary",
+            message=f"ETL finished with {total_errors} row-level error(s)",
+            error_class="RuntimeError" if total_errors > 0 else None,
+            details={
+                "stats": stats,
+                "error_report_path": str(ERROR_REPORT_PATH),
+                "error_report": payload,
+            },
+        )
+    ]
+    for item in ETL_ERRORS:
+        events.append(
+            build_error_event(
+                run_id=RUN_ID,
+                script_name="etl/run.py",
+                step_name=item.get("stage"),
+                phase="etl",
+                event_type="etl_row_error",
+                message=item.get("message") or "ETL row error",
+                table_name=item.get("table"),
+                legacy_id=item.get("legacy_id"),
+                probable_constraint=item.get("probable_constraint"),
+                details={"row_error": item},
+            )
+        )
+    persist_error_events(events)
+    return payload
 
 
 # ============================================================================
@@ -1752,6 +1803,12 @@ def run_etl():
     global VALID_FK_IDS
     ETL_ERRORS.clear()
     etl_start = time.monotonic()
+    mysql = None
+    cursor = None
+    pg = None
+    total_ok = 0
+    total_err = 0
+    report_payload = None
 
     log("=" * 70)
     log("ETL v12 — MySQL legado → Supabase │ Blocos Topológicos + FK-Bypass")
@@ -1936,7 +1993,24 @@ def run_etl():
     pg.close()
 
     if total_err > 0 or ETL_ERRORS:
-        write_etl_error_report(total_err)
+        report_payload = persist_etl_error_report(total_err, stats)
+        if total_err > 0:
+            persist_error_event(
+                run_id=RUN_ID,
+                script_name="etl/run.py",
+                step_name="run_etl",
+                phase="etl",
+                event_type="etl_failure",
+                message=f"ETL failed with {total_err} row-level errors",
+                error_class="RuntimeError",
+                details={
+                    "stats": stats,
+                    "total_ok": total_ok,
+                    "total_err": total_err,
+                    "error_report_path": str(ERROR_REPORT_PATH),
+                    "error_report": report_payload,
+                },
+            )
 
     if total_err > 0:
         log(f"  FAIL-FAST: {total_err} erros encontrados", "ERROR")

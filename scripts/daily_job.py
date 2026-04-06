@@ -23,6 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.check_env import check_env  # noqa: E402
+from scripts.error_log_sink import capture_traceback, ensure_run_id, persist_error_event, read_json_file, read_text_file  # noqa: E402
 from scripts.fetch_backup import fetch_backup  # noqa: E402
 from scripts.import_dump import import_dump  # noqa: E402
 from scripts.truncate_supabase import truncate_supabase  # noqa: E402
@@ -49,6 +50,7 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("daily_job")
+RUN_ID = ensure_run_id()
 
 
 class StepTimer:
@@ -152,6 +154,7 @@ def run_daily_job(
     backup_date: date | None = None,
 ) -> None:
     manifest = {
+        "run_id": RUN_ID,
         "run_started_at": _utc_now(),
         "mode": "dry-run" if dry_run else "production",
         "status": "running",
@@ -237,6 +240,28 @@ def run_daily_job(
         manifest["error"] = str(exc)
         manifest["run_finished_at"] = _utc_now()
         _persist_manifest(manifest)
+        persist_error_event(
+            script_name="scripts/daily_job.py",
+            step_name="run_daily_job",
+            phase="orchestration",
+            event_type="daily_job_failure",
+            message=str(exc),
+            error_class=type(exc).__name__,
+            traceback_text=capture_traceback(exc),
+            run_id=RUN_ID,
+            details={
+                "dry_run": dry_run,
+                "skip_fetch": skip_fetch,
+                "backup_path": str(backup_path) if backup_path else None,
+                "backup_path_override": str(backup_path_override) if backup_path_override else None,
+                "backup_date": backup_date.isoformat() if backup_date else None,
+                "manifest": manifest,
+                "steps": steps,
+                "log_file": str(log_file.resolve()),
+                "log_output": read_text_file(log_file),
+                "error_report": read_json_file(os.getenv("ETL_ERRORS_PATH", os.path.join(os.getenv("LOGS_DIR", "./logs"), "etl_errors.json"))),
+            },
+        )
         raise
 
     finally:

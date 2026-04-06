@@ -66,6 +66,11 @@ Sempre publicados (`if: always()`):
 - `backups/manifest.json`
 - `backups/verify_baseline.json`
 
+Persistência no banco:
+- `public.etl_error_logs` recebe falhas operacionais e rejeições capturadas do ETL
+- usar `run_id` para correlacionar múltiplos eventos do mesmo workflow
+- o campo `details jsonb` guarda manifesto, diagnostics, saída de log e contexto do GitHub Actions quando disponível
+
 Marcos esperados no log:
 - `[START]/[OK] 0. Validate env`
 - `Probe OK: protocol=ftp ...`

@@ -22,6 +22,24 @@ CREATE TABLE public.chat_sessions (
   last_message_at timestamp with time zone,
   CONSTRAINT chat_sessions_pkey PRIMARY KEY (id)
 );
+CREATE TABLE public.etl_error_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  run_id text NOT NULL,
+  script_name text NOT NULL,
+  step_name text,
+  phase text,
+  event_type text NOT NULL,
+  severity text NOT NULL DEFAULT 'error'::text,
+  table_name text,
+  legacy_id text,
+  error_class text,
+  probable_constraint text,
+  message text NOT NULL,
+  traceback text,
+  details jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT etl_error_logs_pkey PRIMARY KEY (id)
+);
 CREATE TABLE public.is_clientes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   erp_id bigint,

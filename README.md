@@ -50,6 +50,11 @@ Em todo run (sucesso ou falha), o workflow publica:
 - `backups/manifest.json`
 - `backups/verify_baseline.json`
 
+Telemetria persistente de erro:
+- tabela `public.etl_error_logs` no Supabase
+- captura falhas de `check_env`, `probe_backup_source`, `daily_job`, `verify_supabase_load` e resumo/rejeições do `etl/run.py`
+- cada evento inclui `run_id`, script, etapa, mensagem, traceback e `details` em `jsonb`
+
 Artifact:
 - `etl-logs-<run_id>`
 
