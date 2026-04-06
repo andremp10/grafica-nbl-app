@@ -1586,6 +1586,60 @@ def pg_flush(conn, table, batch, conflict_col, ok, err):
     return [], ok, err
 
 
+def _apply_self_ref_updates(
+    conn,
+    table: str,
+    ref_col: str,
+    updates: List[Tuple[str, str]],
+) -> Tuple[int, int]:
+    """Aplica FKs auto-referentes em uma segunda fase, sem exigir superuser."""
+    from psycopg2.extras import execute_values
+
+    if not updates:
+        return 0, 0
+
+    deduped: Dict[str, str] = {}
+    for row_id, ref_id in updates:
+        if row_id and ref_id:
+            deduped[str(row_id)] = str(ref_id)
+
+    if not deduped:
+        return 0, 0
+
+    sql = f'''
+        UPDATE public."{table}" AS target
+        SET "{ref_col}" = src.ref_id
+        FROM (VALUES %s) AS src(id, ref_id)
+        JOIN public."{table}" AS parent ON parent."id" = src.ref_id
+        WHERE target."id" = src.id
+          AND target."{ref_col}" IS DISTINCT FROM src.ref_id
+    '''
+
+    applied = 0
+    items = list(deduped.items())
+
+    for i in range(0, len(items), BATCH_SIZE):
+        chunk = items[i:i + BATCH_SIZE]
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                sql,
+                chunk,
+                template="(%s::uuid, %s::uuid)",
+                page_size=len(chunk),
+            )
+            applied += max(cur.rowcount, 0)
+        conn.commit()
+
+    skipped = len(items) - applied
+    if skipped:
+        log(
+            f"  [WARN] {table}: {skipped:,} auto-relacionamentos nÃ£o puderam ser atualizados",
+            "WARN",
+        )
+    return applied, skipped
+
+
 def _set_replication_role(pg, role: str) -> None:
     """Ativa/desativa checagem de FK e triggers para a sessão PostgreSQL corrente.
 
@@ -2234,6 +2288,7 @@ def _process_categorias(cursor, pg, slug_map):
 
     ok, err = 0, 0
     batch: List[dict] = []
+    self_ref_updates: List[Tuple[str, str]] = []
     seen_slugs: Set[str] = set()
 
     for row in cursor.fetchall():
@@ -2250,6 +2305,10 @@ def _process_categorias(cursor, pg, slug_map):
                 # status NOT NULL DEFAULT 1
                 if t_row.get("status") is None:
                     t_row["status"] = 1
+                parent_id = t_row.get("parent_id")
+                if parent_id:
+                    self_ref_updates.append((t_row["id"], parent_id))
+                    t_row["parent_id"] = None
                 batch.append(t_row)  # parent_id já resolvido por transform_categoria
         except Exception as e:
             if err < 3:
@@ -2262,11 +2321,15 @@ def _process_categorias(cursor, pg, slug_map):
         return 0, err
 
     # Desativar FK checks para permitir inserção com parent_id (self-ref) em passagem única
-    _set_replication_role(pg, "replica")
-    try:
-        batch, ok, err = pg_flush(pg, "is_produtos_categorias", batch, "id", ok, err)
-    finally:
-        _set_replication_role(pg, "origin")
+    batch, ok, err = pg_flush(pg, "is_produtos_categorias", batch, "id", ok, err)
+    if self_ref_updates:
+        updated, skipped = _apply_self_ref_updates(
+            pg,
+            "is_produtos_categorias",
+            "parent_id",
+            self_ref_updates,
+        )
+        log(f"  â†’ parent_id aplicado: OK={updated:,}  SKIP={skipped:,}")
 
     log(f"  → OK={ok:,}  ERR={err:,}")
     return ok, err
@@ -2314,6 +2377,7 @@ def _process_pedidos(cursor, pg, cupom_codigos):
 
     ok, err = 0, 0
     batch: List[dict] = []
+    self_ref_updates: List[Tuple[str, str]] = []
     processed = 0
     next_progress = 20_000
 
@@ -2405,19 +2469,18 @@ def _process_pagamentos(cursor, pg):
 
     ok, err = 0, 0
     batch: List[dict] = []
+    self_ref_updates: List[Tuple[str, str]] = []
     processed = 0
     next_progress = 20_000
 
     # Desativar FK checks para suportar original_id (self-ref) em passagem única
-    _set_replication_role(pg, "replica")
-    try:
-        while True:
-            rows = cursor.fetchmany(BATCH_SIZE)
-            if not rows:
-                break
-            processed += len(rows)
-            for row in rows:
-                try:
+    while True:
+        rows = cursor.fetchmany(BATCH_SIZE)
+        if not rows:
+            break
+        processed += len(rows)
+        for row in rows:
+            try:
                     t_row = transform_pagamento(row)
                     if t_row and t_row.get("id"):
                         # cliente_id NOT NULL — skip orphan pagamentos
@@ -2432,22 +2495,33 @@ def _process_pagamentos(cursor, pg):
                         # forma NOT NULL — fallback
                         if t_row.get("forma") is None:
                             t_row["forma"] = ""
+                        original_id = t_row.get("original_id")
+                        if original_id:
+                            self_ref_updates.append((t_row["id"], original_id))
+                            t_row["original_id"] = None
                         # original_id: mantido no row (FK disabled via replication_role)
                         batch.append(t_row)
-                except Exception as e:
-                    if err < 5:
-                        log(f"    Err pag {row.get('id')}: {e}", "WARN")
-                    record_etl_error("is_pedidos_pagamentos", row.get("id"), str(e), stage="transform")
-                    err += 1
-            if len(batch) >= BATCH_SIZE:
-                batch, ok, err = pg_flush(pg, "is_pedidos_pagamentos", batch, "id", ok, err)
-            if processed >= next_progress:
+            except Exception as e:
+                if err < 5:
+                    log(f"    Err pag {row.get('id')}: {e}", "WARN")
+                record_etl_error("is_pedidos_pagamentos", row.get("id"), str(e), stage="transform")
+                err += 1
+        if len(batch) >= BATCH_SIZE:
+            batch, ok, err = pg_flush(pg, "is_pedidos_pagamentos", batch, "id", ok, err)
+        if processed >= next_progress:
                 log(f"  … progress is_pedidos_pagamentos: lidos={processed:,} OK={ok:,} ERR={err:,}")
                 next_progress += 20_000
 
-        batch, ok, err = pg_flush(pg, "is_pedidos_pagamentos", batch, "id", ok, err)
-    finally:
-        _set_replication_role(pg, "origin")
+    batch, ok, err = pg_flush(pg, "is_pedidos_pagamentos", batch, "id", ok, err)
+
+    if self_ref_updates:
+        updated, skipped = _apply_self_ref_updates(
+            pg,
+            "is_pedidos_pagamentos",
+            "original_id",
+            self_ref_updates,
+        )
+        log(f"  â†’ original_id aplicado: OK={updated:,}  SKIP={skipped:,}")
 
     log(f"  → OK={ok:,}  ERR={err:,}")
     return ok, err
