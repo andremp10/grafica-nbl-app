@@ -60,4 +60,5 @@ coverage/
 # Local debug/probes
 debug_request.py
 probe_*.py
+!scripts/probe_backup_source.py
 test_webhook.py
