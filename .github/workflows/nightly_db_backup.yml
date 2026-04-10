@@ -46,12 +46,29 @@ jobs:
             -v "${PWD}/${BACKUP_DIR}:/backups" \
             postgres:17 \
             bash -lc "
+              set -euo pipefail
+          
+              HOST='db.bcypejzqbcwibvtbbfor.supabase.co'
+          
+              echo 'Resolving IPv4 inside container...'
+              IP=\$(getent ahostsv4 \$HOST | awk '{print \$1; exit}')
+          
+              if [ -z \"\$IP\" ]; then
+                echo 'Erro: não foi possível resolver IPv4'
+                exit 1
+              fi
+          
+              echo \"Using IPv4: \$IP\"
+          
+              export PGHOSTADDR=\$IP
+          
               pg_dump --format=custom \
                 --compress=9 \
                 --no-owner \
                 --no-privileges \
                 --file \"/backups/${dump_name}\" \
                 \"\$SUPABASE_DB_URL\"
+          
               pg_restore -l \"/backups/${dump_name}\" > \"/backups/${toc_name}\"
             "
 
