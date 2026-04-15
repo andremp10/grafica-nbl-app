@@ -32,7 +32,7 @@ from scripts.error_log_sink import (  # noqa: F841
     build_error_event,
     ensure_run_id,
     persist_error_event,
-    persist_error_events#,
+    persist_error_events,
     read_json_file,
 )
 
