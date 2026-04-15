@@ -38,8 +38,8 @@ from scripts.error_log_sink import (
     capture_traceback,
     ensure_run_id,
     persist_error_event,
-    persist_error_events,
-    read_json_file,
+    persist_error_events#,
+    #read_json_file,
 )
 
 if sys.platform == "win32":
@@ -2288,7 +2288,7 @@ def _process_categorias(cursor, pg, slug_map):
 
     ok, err = 0, 0
     batch: List[dict] = []
-    self_ref_updates: List[Tuple[str, str]] = []
+    #self_ref_updates: List[Tuple[str, str]] = []
     seen_slugs: Set[str] = set()
 
     for row in cursor.fetchall():
