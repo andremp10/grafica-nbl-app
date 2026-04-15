@@ -2287,6 +2287,7 @@ def _process_categorias(cursor, pg, slug_map):
     ok, err = 0, 0
     batch: List[dict] = []
     self_ref_updates: List[Tuple[str, str]] = []
+    _ = self_ref_updates
     seen_slugs: Set[str] = set()
 
     for row in cursor.fetchall():
