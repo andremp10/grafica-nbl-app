@@ -30,7 +30,6 @@ from typing import Optional, Dict, Any, Set, List, Tuple, Callable
 from dotenv import load_dotenv
 from scripts.error_log_sink import (
     build_error_event,
-    capture_traceback,
     ensure_run_id,
     persist_error_event,
     persist_error_events#,
