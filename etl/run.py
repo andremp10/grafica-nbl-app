@@ -2286,8 +2286,7 @@ def _process_categorias(cursor, pg, slug_map):
 
     ok, err = 0, 0
     batch: List[dict] = []
-    self_ref_updates: List[Tuple[str, str]] = []
-    _ = self_ref_updates
+    self_ref_updates: List[Tuple[str, str]] = [] # noqa: F841
     seen_slugs: Set[str] = set()
 
     for row in cursor.fetchall():
@@ -2376,7 +2375,7 @@ def _process_pedidos(cursor, pg, cupom_codigos):
 
     ok, err = 0, 0
     batch: List[dict] = []
-    self_ref_updates: List[Tuple[str, str]] = []
+    self_ref_updates: List[Tuple[str, str]] = [] # noqa: F841
     processed = 0
     next_progress = 20_000
 
@@ -2468,7 +2467,7 @@ def _process_pagamentos(cursor, pg):
 
     ok, err = 0, 0
     batch: List[dict] = []
-    self_ref_updates: List[Tuple[str, str]] = []
+    self_ref_updates: List[Tuple[str, str]] = [] # noqa: F841
     processed = 0
     next_progress = 20_000
 
