@@ -28,12 +28,12 @@ import datetime as dt
 from pathlib import Path
 from typing import Optional, Dict, Any, Set, List, Tuple, Callable
 from dotenv import load_dotenv
-from scripts.error_log_sink import (  # noqa: F841
+from scripts.error_log_sink import (  
     build_error_event,
     ensure_run_id,
     persist_error_event,
     persist_error_events,
-    read_json_file,
+    read_json_file, # noqa: F841
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
