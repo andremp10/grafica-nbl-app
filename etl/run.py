@@ -35,14 +35,14 @@ if str(PROJECT_ROOT) not in sys.path:
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
 
-from dotenv import load_dotenv
-from scripts.error_log_sink import (  
+from dotenv import load_dotenv # noqa: E402
+from scripts.error_log_sink import (  # noqa: E402
     build_error_event,
     ensure_run_id,
     persist_error_event,
     persist_error_events,
     read_json_file, # noqa: F401
-) # noqa: E402
+)
 
 load_dotenv()
 
