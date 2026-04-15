@@ -33,7 +33,7 @@ from scripts.error_log_sink import (
     ensure_run_id,
     persist_error_event,
     persist_error_events,
-    read_json_file, # noqa: F841
+    read_json_file, # noqa: F401
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
