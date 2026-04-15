@@ -30,7 +30,7 @@ from typing import Optional, Dict, Any, Set, List, Tuple, Callable
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+    sys.path.insert(0, str(PROJECT_ROOT)) # noqa: E402
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -42,7 +42,7 @@ from scripts.error_log_sink import (
     persist_error_event,
     persist_error_events,
     read_json_file, # noqa: F401
-)
+) # noqa: E402
 
 load_dotenv()
 
