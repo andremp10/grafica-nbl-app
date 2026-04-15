@@ -27,11 +27,6 @@ import threading
 import datetime as dt
 from pathlib import Path
 from typing import Optional, Dict, Any, Set, List, Tuple, Callable
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
 from dotenv import load_dotenv
 from scripts.error_log_sink import (
     build_error_event,
@@ -41,6 +36,10 @@ from scripts.error_log_sink import (
     persist_error_events#,
     #read_json_file,
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
@@ -2288,7 +2287,7 @@ def _process_categorias(cursor, pg, slug_map):
 
     ok, err = 0, 0
     batch: List[dict] = []
-    #self_ref_updates: List[Tuple[str, str]] = []
+    self_ref_updates: List[Tuple[str, str]] = []
     seen_slugs: Set[str] = set()
 
     for row in cursor.fetchall():
