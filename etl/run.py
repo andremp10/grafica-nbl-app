@@ -380,7 +380,13 @@ def get_pg():
     db_url = os.getenv("SUPABASE_DB_URL")
     if not db_url:
         raise ValueError("SUPABASE_DB_URL is required")
-    return psycopg2.connect(db_url)
+    conn = psycopg2.connect(db_url)
+
+    with conn.cursor() as cur:
+         cur.execute("SET statement_timeout = 0")
+         cur.execute("SET idle_in_transaction_session_timeout = 0")
+    conn.commit()
+    return conn
 
 
 # ============================================================================
