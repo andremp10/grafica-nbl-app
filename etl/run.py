@@ -383,8 +383,8 @@ def get_pg():
     conn = psycopg2.connect(db_url)
 
     with conn.cursor() as cur:
-         cur.execute("SET statement_timeout = 0")
-         cur.execute("SET idle_in_transaction_session_timeout = 0")
+         cur.execute("SET statement_timeout = 1800000")
+         cur.execute("SET idle_in_transaction_session_timeout = 1800000")
     conn.commit()
     return conn
 
