@@ -13,7 +13,7 @@ COMO USAR:
 Variáveis de controle:
   ETL_VALIDATE_ONLY=1   → valida mapping vs schema e sai sem escrever
   ETL_ONLY_TABLES=t1,t2 → roda apenas as tabelas listadas
-  ETL_BATCH_SIZE=500 #Anterior = 2000   → tamanho do batch de insert
+  ETL_BATCH_SIZE = 2000   → tamanho do batch de insert
 """
 
 import os
